@@ -1,0 +1,17 @@
+{
+  "name": "GPS Charts",
+  "short_name": "GPS Charts",
+  "description": "Boat GPS on a marine chart with open bathymetry and an offline tile cache. Not for navigation.",
+  "id": "./dashboard.html",
+  "start_url": "./dashboard.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a2638",
+  "theme_color": "#0a2638",
+  "icons": [
+    { "src": "icons/icon192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

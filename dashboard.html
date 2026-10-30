@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0a2638">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="GPS Charts">
+  <title>GPS Charts — Dashboard</title>
+  <link rel="manifest" href="app.webmanifest">
+  <link rel="icon" href="icons/icon32.png" sizes="32x32">
+  <link rel="apple-touch-icon" href="icons/icon180.png">
+  <link rel="stylesheet" href="vendor/maplibre-gl.css">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <button id="toggleSidebar" class="menu-toggle" type="button" title="Hide menus" aria-label="Hide menus" aria-expanded="true" aria-controls="sidebar">
+        <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+      <img src="icons/icon48.png" alt="">
+      <div><strong>GPS Charts</strong><span>NMEA 0183 · WebSocket · Serial · N2K gateway</span></div>
+    </div>
+    <div class="pills">
+      <div class="connection-pill"><span id="netDot" class="dot live"></span><span id="netText">Internet online</span></div>
+      <div class="connection-pill"><span id="statusDot" class="dot"></span><span id="statusText">No GPS connection</span></div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside id="sidebar" class="sidebar">
+      <section>
+        <h2>Position</h2>
+        <div class="position-grid">
+          <div><span>Latitude</span><strong id="lat">—</strong></div>
+          <div><span>Longitude</span><strong id="lon">—</strong></div>
+          <div><span>Speed</span><strong id="sog">—</strong></div>
+          <div><span>Course</span><strong id="cog">—</strong></div>
+        </div>
+        <p id="fixMeta" class="muted">Waiting for RMC, GGA, GLL or JSON.</p>
+      </section>
+
+      <section>
+        <h2>GPS input</h2>
+        <label>Connection mode
+          <select id="connectionMode">
+            <option value="websocket">WebSocket / TCP-UDP bridge</option>
+            <option value="serial">Serial port / N2K gateway</option>
+            <option value="device">Device GPS (this phone, tablet or laptop)</option>
+          </select>
+        </label>
+        <label id="wsRow">WebSocket address
+          <input id="wsUrl" type="text" spellcheck="false" placeholder="ws://127.0.0.1:8765">
+        </label>
+        <div id="serialRows" class="hidden">
+          <label>Serial port
+            <select id="serialPort"><option value="">No authorised ports — click Add port</option></select>
+          </label>
+          <div class="button-row tight">
+            <button id="scanPorts" class="secondary">Scan ports</button>
+            <button id="addPort" class="secondary">Add port…</button>
+          </div>
+          <label>Baud rate
+            <select id="serialBaud">
+              <option>4800</option><option>9600</option><option>19200</option>
+              <option>38400</option><option>57600</option><option>115200</option>
+            </select>
+          </label>
+          <p id="scanResult" class="muted"></p>
+        </div>
+        <div class="button-row">
+          <button id="connect" class="primary">Connect</button>
+          <button id="disconnect" disabled>Disconnect</button>
+        </div>
+        <button id="simulate" class="secondary full">Test with a simulated position</button>
+        <p id="deviceHint" class="hint hidden">Uses this device's own location. On a phone or tablet that is its GPS; a laptop usually only knows its Wi-Fi location. Speed and course come from the device and are less steady than a boat GPS. The screen is kept on while connected.</p>
+        <p id="wsHint" class="hint">TCP/UDP: run <code>bridge/gps_bridge.py</code> and connect to the local WebSocket. For N2K, set the gateway to output NMEA 0183, JSON or Signal K.</p>
+        <p id="serialHint" class="hint hidden">Chrome only lists ports you have authorised. <strong>Add port…</strong> opens Chrome's picker with every port on the system. <strong>Scan ports</strong> listens on each authorised port at the common baud rates and selects the one that sends valid NMEA.</p>
+      </section>
+
+      <section>
+        <h2>Provider page</h2>
+        <label>Provider
+          <select id="provider">
+            <option value="iboating">i-Boating</option>
+            <option value="cmap">C-MAP Chart Explorer (Pin location)</option>
+          </select>
+        </label>
+        <label>URL zoom <input id="zoom" type="number" min="1" max="20" step="0.01"></label>
+        <label class="check"><input id="autoCenterProvider" type="checkbox"> Auto-centre on the GPS position</label>
+        <label>Minimum interval (seconds) <input id="updateSeconds" type="number" min="1" max="60" step="1"></label>
+        <button id="openProvider" class="primary full">Open / centre provider</button>
+        <p id="providerHint" class="hint">Both providers show the boat without reloading the page. i-Boating draws its own boat marker with a heading line and keeps your zoom; with auto-centre off the marker still moves but the chart stays put. C-MAP shows the boat as a <em>Pinned location</em>, but resets its zoom on each update and ignores the URL zoom; a longer interval leaves time to zoom in between.</p>
+      </section>
+
+      <section>
+        <h2>Dashboard chart</h2>
+        <label>Base chart
+          <select id="baseChart">
+            <option value="esri">Esri World Ocean Base</option>
+            <option value="osm">OpenStreetMap</option>
+            <option value="custom">Custom XYZ source…</option>
+          </select>
+        </label>
+        <p id="baseChartHint" class="hint"></p>
+        <div id="customChartRows" class="hidden">
+          <label>Raster XYZ template
+            <input id="tileUrl" type="text" spellcheck="false">
+          </label>
+          <div class="two-cols">
+            <label>Min zoom <input id="tileMinZoom" type="number" min="0" max="20"></label>
+            <label>Max zoom <input id="tileMaxZoom" type="number" min="1" max="24"></label>
+          </div>
+          <label>Attribution <input id="attribution" type="text"></label>
+          <button id="applyTiles" class="secondary full">Apply chart source</button>
+        </div>
+        <label class="check"><input id="bathymetryEnabled" type="checkbox" checked> Show depth contours and soundings</label>
+        <label class="check"><input id="bathymetryShading" type="checkbox" checked> Show depth colours and shading</label>
+        <label>Depth units
+          <select id="depthUnits">
+            <option value="m">Metres (m)</option>
+            <option value="ft">Feet (ft)</option>
+          </select>
+        </label>
+        <p class="hint">Open bathymetry from Open Waters · EMODnet/GEBCO. In European waters the source is usually EMODnet (~115 m); it is not equivalent to C-MAP HRB or sonar contours.</p>
+        <label class="check"><input id="followBoat" type="checkbox" checked> Follow the boat on the dashboard</label>
+        <button id="centerBoat" class="secondary full">Centre on the boat</button>
+        <button id="clearTrack" class="link-button">Clear track</button>
+      </section>
+
+      <section>
+        <h2>Offline cache</h2>
+        <label class="check"><input id="cacheEnabled" type="checkbox" checked> Cache chart tiles for offline use</label>
+        <label>Mode
+          <select id="cacheMode">
+            <option value="network">Network first, cache when offline</option>
+            <option value="cache">Cache first (saves data)</option>
+            <option value="offline">Offline only (no downloads)</option>
+          </select>
+        </label>
+        <div class="two-cols">
+          <label>Max size (MB) <input id="cacheMaxMB" type="number" min="10" max="20000" step="10"></label>
+          <label>Refresh after (days) <input id="cacheMaxAgeDays" type="number" min="1" max="365" step="1"></label>
+        </div>
+        <label>Extra zoom levels to save <input id="prefetchLevels" type="number" min="0" max="4" step="1"></label>
+        <button id="prefetchArea" class="secondary full">Save visible area for offline use</button>
+        <div id="prefetchProgress" class="progress hidden"><div></div></div>
+        <div class="button-row tight">
+          <button id="refreshCacheStats">Refresh usage</button>
+          <button id="clearCache">Clear cache</button>
+        </div>
+        <p id="cacheStats" class="muted">—</p>
+        <p class="hint">Every tile you view (chart, seamarks, bathymetry and labels) is stored. When the internet drops, the dashboard serves stored tiles automatically. The Esri base chart is cached as you view it, but not bulk-saved, as Esri does not allow tile export. OpenStreetMap does not allow offline storage, so its tiles only use the browser's own cache: recently viewed areas usually stay visible offline, but not reliably. The C-MAP and i-Boating sites themselves need internet access.</p>
+      </section>
+
+      <p class="warning">Experimental chart. Do not use as a primary source for navigation. Check each provider's licences and terms.</p>
+    </aside>
+
+    <section class="map-area">
+      <div id="map"></div>
+      <div id="mapNotice" class="map-notice">The chart will centre on the first position received.</div>
+      <div class="map-footer"><span id="eventLog">Dashboard ready.</span><span id="clock"></span></div>
+    </section>
+  </main>
+
+  <script src="shared.js"></script>
+  <script src="platform.js"></script>
+  <script src="vendor/maplibre-gl.js"></script>
+  <script src="tilecache.js"></script>
+  <script src="bathymetry.js"></script>
+  <script src="nmea.js"></script>
+  <script src="serialports.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

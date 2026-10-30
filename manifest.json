@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "GPS NMEA → C-MAP & i-Boating Charts",
+  "short_name": "GPS Charts",
+  "version": "0.4.0",
+  "description": "Receives GPS data and shows charts, depth contours and soundings in its own dashboard or on the chart providers' sites.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "storage", "scripting", "unlimitedStorage"],
+  "host_permissions": [
+    "https://tiles.c-map.com/*",
+    "https://appchart.c-map.com/*",
+    "https://www.c-map.com/*",
+    "https://maps.navico.com/*",
+    "https://fishing-app.gpsnauticalcharts.com/*",
+    "https://tile.openstreetmap.org/*",
+    "https://server.arcgisonline.com/*",
+    "https://tiles.openseamap.org/*",
+    "https://tiles.openwaters.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "GPS Charts",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http:; connect-src 'self' https: http: ws: wss:"
+  }
+}
