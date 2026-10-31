@@ -5,6 +5,7 @@ const DEFAULT_FIX = { lat: 50.775, lon: -1.3 };
 const SETTING_IDS = [
   'connectionMode', 'provider', 'zoom', 'autoCenterProvider', 'updateSeconds', 'wsUrl', 'serialBaud',
   'bathymetryEnabled', 'bathymetryShading', 'depthUnits',
+  'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'tempUnits', 'waveUnits',
   'cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays', 'prefetchLevels'
 ];
 const CACHE_IDS = ['cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays'];
@@ -47,6 +48,15 @@ let prefetchAbort = null;
 let geoWatchId = null;
 let wakeLock = null;
 let wakeLockWanted = false;
+let lastWeather = null;
+let weatherAbort = null;
+let windMarker = null;
+let fieldMarkers = [];
+let fieldAbort = null;
+let fieldTimer = null;
+const WEATHER_MIN_MOVE_M = 2000;
+const WEATHER_MAX_AGE_MS = 10 * 60 * 1000;
+const WEATHER_IDS = ['windReadout', 'gustReadout', 'airTempReadout', 'pressureReadout', 'waveReadout'];
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
   log(`${message}: ${String(raw).slice(0, 90)}`);
@@ -94,7 +104,159 @@ function receiveFix(fix) {
   setConnectionState('live', `GPS live · ${fix.source}`);
   updateMap(fix);
   updateClock();
+  requestConditions(fix);
+  if (lastWeather && lastWeather.conditions) updateWindBarb(fix, lastWeather.conditions);
   GPSPlatform.send({ type: 'GPS_FIX', fix }).catch(error => log(`State not synchronised: ${error.message}`));
+}
+
+/* ---------- Conditions (Open-Meteo forecast) ---------- */
+
+function clearConditions(note) {
+  for (const id of WEATHER_IDS) $(id).textContent = '—';
+  if (note !== undefined) $('condMeta').textContent = note;
+}
+
+async function requestConditions(fix, force = false) {
+  if (!config.weatherEnabled) return;
+  const now = Date.now();
+  if (!force && !Weather.needsRefresh(lastWeather && lastWeather.at, fix.lat, fix.lon, now, WEATHER_MIN_MOVE_M, WEATHER_MAX_AGE_MS)) {
+    return;
+  }
+  lastWeather = { at: { lat: fix.lat, lon: fix.lon, time: now } };
+  if (weatherAbort) weatherAbort.abort();
+  weatherAbort = new AbortController();
+  try {
+    const conditions = await Weather.fetchConditions(fix.lat, fix.lon, { signal: weatherAbort.signal, model: config.weatherModel });
+    lastWeather.conditions = conditions;
+    updateConditions(conditions);
+  } catch (error) {
+    if (error.name !== 'AbortError') $('condMeta').textContent = `Forecast unavailable: ${error.message}`;
+  }
+}
+
+function updateConditions(c) {
+  // Wind stays in knots (the maritime standard the barb is drawn in); air temperature and wave height
+  // are fetched metric and converted here, so changing units never needs a new request.
+  const tempUnit = config.tempUnits === 'F' ? 'F' : 'C';
+  const waveUnit = config.waveUnits === 'ft' ? 'ft' : 'm';
+  const direction = Weather.degToCompass(c.windDir);
+  const airTemp = c.airTemp === null || c.airTemp === undefined ? null
+    : (tempUnit === 'F' ? c.airTemp * 9 / 5 + 32 : c.airTemp);
+  const waveHeight = c.waveHeight === null || c.waveHeight === undefined ? null
+    : (waveUnit === 'ft' ? c.waveHeight * 3.28084 : c.waveHeight);
+  $('windReadout').textContent = c.windSpeed === null || c.windSpeed === undefined
+    ? '—'
+    : `${formatNumber(c.windSpeed, 0, ' kn')}${direction ? ' ' + direction : ''}`;
+  $('gustReadout').textContent = formatNumber(c.windGust, 0, ' kn');
+  $('airTempReadout').textContent = formatNumber(airTemp, 1, ` °${tempUnit}`);
+  $('pressureReadout').textContent = formatNumber(c.pressure, 0, ' hPa');
+  $('waveReadout').textContent = waveHeight === null
+    ? '—'
+    : `${formatNumber(waveHeight, 1, ' ' + waveUnit)}${c.wavePeriod ? ' · ' + formatNumber(c.wavePeriod, 0, ' s') : ''}`;
+  const modelName = $('weatherModel').selectedOptions[0] ? $('weatherModel').selectedOptions[0].textContent : '';
+  const modelTag = config.weatherModel && config.weatherModel !== 'best_match' ? ` (${modelName})` : '';
+  $('condMeta').textContent = `${c.source}${modelTag} forecast · ${new Date(c.time).toLocaleTimeString(LOCALE)}`;
+  updateWindBarb(lastFix, c);
+}
+
+/* ---------- Wind/wave field across the visible chart ---------- */
+
+function clearField() {
+  for (const marker of fieldMarkers) marker.remove();
+  fieldMarkers = [];
+}
+
+// Hover text for a field cell: mean wind, gusts and wave height. Shown because field cells are
+// interactive (see the .field-cell rule); the boat barb stays non-interactive over the hull.
+function fieldTitle(point) {
+  const bits = [];
+  if (point.windSpeed !== null && point.windSpeed !== undefined) {
+    const compass = Weather.degToCompass(point.windDir);
+    const gust = point.windGust !== null && point.windGust !== undefined ? `, gusts ${Math.round(point.windGust)} kn` : '';
+    bits.push(`Wind ${Math.round(point.windSpeed)} kn${gust}${compass ? ' from ' + compass : ''}`);
+  }
+  if (point.waveHeight !== null && point.waveHeight !== undefined) {
+    bits.push(`Waves ${point.waveHeight.toFixed(1)} m`);
+  }
+  return bits.join(' · ');
+}
+
+function renderField(points) {
+  clearField();
+  if (!mapReady) return;
+  for (const point of points) {
+    let html = '';
+    if (config.windFieldEnabled && point.windSpeed !== null && point.windSpeed !== undefined) {
+      html += Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 46, width: 1.6 });
+    }
+    if (config.waveFieldEnabled && point.waveHeight !== null && point.waveHeight !== undefined) {
+      html += Weather.waveArrowSvg(point.waveHeight, point.waveDir, { size: 34 });
+    }
+    if (!html) continue;
+    const element = document.createElement('div');
+    element.className = 'field-cell';
+    element.innerHTML = html;
+    element.title = fieldTitle(point);
+    const marker = new maplibregl.Marker({ element, rotationAlignment: 'map' })
+      .setLngLat([point.lon, point.lat])
+      .addTo(map);
+    fieldMarkers.push(marker);
+  }
+}
+
+async function requestField() {
+  if (!mapReady || (!config.windFieldEnabled && !config.waveFieldEnabled)) {
+    clearField();
+    return;
+  }
+  const b = map.getBounds();
+  const points = Weather.gridPoints({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
+  if (fieldAbort) fieldAbort.abort();
+  fieldAbort = new AbortController();
+  try {
+    const data = await Weather.fetchField(points, {
+      wind: config.windFieldEnabled,
+      wave: config.waveFieldEnabled,
+      model: config.weatherModel,
+      signal: fieldAbort.signal
+    });
+    renderField(data);
+  } catch (error) {
+    if (error.name !== 'AbortError') log(`Wind/wave field unavailable: ${error.message}`);
+  }
+}
+
+// Debounced: panning or zooming moves the visible area, so the field is re-fetched for the new bounds.
+function scheduleField() {
+  if (!config.windFieldEnabled && !config.waveFieldEnabled) return;
+  clearTimeout(fieldTimer);
+  fieldTimer = setTimeout(requestField, 500);
+}
+
+// Draws the maritime wind barb at the boat, as a non-interactive map marker offset above the hull.
+function updateWindBarb(fix, c) {
+  const show = mapReady && config.windBarbEnabled && fix && c && c.windSpeed !== null && c.windSpeed !== undefined;
+  if (!show) {
+    if (windMarker) { windMarker.remove(); windMarker = null; }
+    return;
+  }
+  const svg = Weather.windBarbSvg(c.windSpeed, c.windDir);
+  const compass = Weather.degToCompass(c.windDir);
+  const title = `Wind ${Math.round(c.windSpeed)} kn${compass ? ' from ' + compass : ''}`;
+  if (windMarker) {
+    windMarker.setLngLat([fix.lon, fix.lat]);
+    const element = windMarker.getElement();
+    element.innerHTML = svg;
+    element.title = title;
+  } else {
+    const element = document.createElement('div');
+    element.className = 'wind-barb';
+    element.innerHTML = svg;
+    element.title = title;
+    windMarker = new maplibregl.Marker({ element, rotationAlignment: 'map', offset: [0, -34] })
+      .setLngLat([fix.lon, fix.lat])
+      .addTo(map);
+  }
 }
 
 function boatElement() {
@@ -113,6 +275,7 @@ function initializeMap() {
     map.remove();
     map = null;
     boatMarker = null;
+    windMarker = null;
     mapReady = false;
   }
   const wrap = TileCache.wrap;
@@ -167,6 +330,8 @@ function initializeMap() {
     });
     mapReady = true;
     if (lastFix) updateMap(lastFix);
+    if (lastFix && lastWeather && lastWeather.conditions) updateWindBarb(lastFix, lastWeather.conditions);
+    requestField();
   });
   map.on('error', event => {
     const message = event?.error?.message || 'Chart resource error';
@@ -181,6 +346,7 @@ function initializeMap() {
     log(message.slice(0, 150));
   });
   map.on('dragstart', () => { $('followBoat').checked = false; });
+  map.on('moveend', scheduleField);
 }
 
 // The follow zoom is not limited by the chart's max zoom: MapLibre enlarges the deepest tiles beyond it.
@@ -714,6 +880,10 @@ async function connect() {
 async function initialize() {
   const keys = [...SETTING_IDS, 'tileUrl', 'tileMinZoom', 'tileMaxZoom', 'attribution', 'latestFix', 'serialPortKey'];
   config = await GPSPlatform.storage.get(keys);
+  if (config.weatherEnabled === undefined) config.weatherEnabled = true;
+  if (config.windBarbEnabled === undefined) config.windBarbEnabled = true;
+  if (!config.tempUnits) config.tempUnits = 'C';
+  if (!config.waveUnits) config.waveUnits = 'm';
   pruneConnectionModes();
   for (const id of SETTING_IDS) {
     if (config[id] !== undefined) {
@@ -733,6 +903,30 @@ async function initialize() {
   TileCache.configure(config);
   $('connectionMode').addEventListener('change', updateModeRows);
   updateModeRows();
+  $('weatherEnabled').addEventListener('change', () => {
+    if ($('weatherEnabled').checked) {
+      if (lastFix) requestConditions(lastFix, true);
+      else clearConditions('Forecast for the boat position. Not a substitute for an official marine forecast.');
+    } else {
+      clearConditions('Forecast off.');
+      updateWindBarb(lastFix, null);
+    }
+  });
+  $('windBarbEnabled').addEventListener('change', () => {
+    updateWindBarb(lastFix, lastWeather && lastWeather.conditions);
+  });
+  for (const id of ['windFieldEnabled', 'waveFieldEnabled']) {
+    $(id).addEventListener('change', () => { requestField().catch(() => {}); });
+  }
+  $('weatherModel').addEventListener('change', () => {
+    if (lastFix) requestConditions(lastFix, true);
+    requestField().catch(() => {});
+  });
+  for (const id of ['tempUnits', 'waveUnits']) {
+    $(id).addEventListener('change', () => {
+      if (lastWeather && lastWeather.conditions) updateConditions(lastWeather.conditions);
+    });
+  }
   $('connect').addEventListener('click', connect);
   $('disconnect').addEventListener('click', disconnect);
   $('serialPort').addEventListener('change', () => saveSelectedPort().catch(error => log(error.message)));

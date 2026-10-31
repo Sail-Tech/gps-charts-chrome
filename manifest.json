@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GPS NMEA → C-MAP & i-Boating Charts",
   "short_name": "GPS Charts",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Receives GPS data and shows charts, depth contours and soundings in its own dashboard or on the chart providers' sites.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "storage", "scripting", "unlimitedStorage"],
@@ -15,7 +15,9 @@
     "https://tile.openstreetmap.org/*",
     "https://server.arcgisonline.com/*",
     "https://tiles.openseamap.org/*",
-    "https://tiles.openwaters.io/*"
+    "https://tiles.openwaters.io/*",
+    "https://api.open-meteo.com/*",
+    "https://marine-api.open-meteo.com/*"
   ],
   "background": {
     "service_worker": "background.js"
