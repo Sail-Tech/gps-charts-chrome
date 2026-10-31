@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- **Forecast timeline:** a slider (with play) at the bottom of the chart scrubs the next 72 hours, so the wind, waves and conditions animate across the map.
+- **Weather cache:** each reading is kept for an hour as fresh and up to 72 hours as an offline fallback, labelled with its age so a stale forecast is never shown as current.
+
+## 0.5.0
+
+- **Weather forecast (Open-Meteo, no API key):** wind, gusts, air temperature, pressure and wave height at the boat; a maritime wind barb at the vessel and an optional wind field and wave arrows across the chart; a choice of forecast model (best match, ECMWF IFS, GFS, ICON, Météo-France, UK Met Office); and configurable air-temperature (°C/°F) and wave-height (m/ft) units.
+
 ## 0.4.0
 
 ### Web app for phones and tablets (PWA)

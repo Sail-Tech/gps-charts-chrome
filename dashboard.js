@@ -48,15 +48,27 @@ let prefetchAbort = null;
 let geoWatchId = null;
 let wakeLock = null;
 let wakeLockWanted = false;
-let lastWeather = null;
+let lastSeriesAt = null;
+let boatSeries = null;        // { fix, times:[], hours:[{...}], info }
+let fieldSeries = null;       // { times:[], points:[{lat,lon,hours:[{...}]}] }
+let selectedHour = 0;         // index into the forecast window (0 = now)
+let playTimer = null;
 let weatherAbort = null;
 let windMarker = null;
 let fieldMarkers = [];
 let fieldAbort = null;
 let fieldTimer = null;
+let wxStore = null;
 const WEATHER_MIN_MOVE_M = 2000;
 const WEATHER_MAX_AGE_MS = 10 * 60 * 1000;
+const FORECAST_WINDOW_H = 72;   // hours of forecast the timeline scrubs through
 const WEATHER_IDS = ['windReadout', 'gustReadout', 'airTempReadout', 'pressureReadout', 'waveReadout'];
+// Persistent weather cache: fresh for an hour (reused without a request), then kept up to 72 hours as
+// an offline fallback shown with its age. Stored per viewer in localStorage.
+const WX_FRESH_MS = 60 * 60 * 1000;
+const WX_MAX_AGE_MS = 72 * 60 * 60 * 1000;
+const WX_MAX_ENTRIES = 600;
+const WX_CACHE_KEY = 'gps-charts-weather-cache';
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
   log(`${message}: ${String(raw).slice(0, 90)}`);
@@ -104,8 +116,8 @@ function receiveFix(fix) {
   setConnectionState('live', `GPS live · ${fix.source}`);
   updateMap(fix);
   updateClock();
-  requestConditions(fix);
-  if (lastWeather && lastWeather.conditions) updateWindBarb(fix, lastWeather.conditions);
+  requestSeries(fix);
+  if (boatSeries && currentHour()) updateWindBarb(fix, currentHour());
   GPSPlatform.send({ type: 'GPS_FIX', fix }).catch(error => log(`State not synchronised: ${error.message}`));
 }
 
@@ -116,25 +128,138 @@ function clearConditions(note) {
   if (note !== undefined) $('condMeta').textContent = note;
 }
 
-async function requestConditions(fix, force = false) {
+function wxLoad() {
+  try { return JSON.parse(localStorage.getItem(WX_CACHE_KEY) || '{}'); } catch (_) { return {}; }
+}
+
+function wxSave(store) {
+  try { localStorage.setItem(WX_CACHE_KEY, JSON.stringify(store)); } catch (_) {}
+}
+
+// One shared in-memory store, so concurrent writes (boat conditions and the field) never clobber each
+// other the way separate load/modify/save round-trips to localStorage would.
+function wxStoreGet() {
+  if (!wxStore) wxStore = wxLoad();
+  return wxStore;
+}
+
+// The hour the timeline is pointing at (0 = now), used by the panel, the boat barb and the field.
+function currentHour() {
+  return boatSeries && boatSeries.hours[selectedHour] ? boatSeries.hours[selectedHour] : null;
+}
+
+// Fetches the 72 h hourly forecast for the boat (cached), then drives the timeline and the display.
+async function requestSeries(fix, force = false) {
   if (!config.weatherEnabled) return;
   const now = Date.now();
-  if (!force && !Weather.needsRefresh(lastWeather && lastWeather.at, fix.lat, fix.lon, now, WEATHER_MIN_MOVE_M, WEATHER_MAX_AGE_MS)) {
+  if (!force && !Weather.needsRefresh(lastSeriesAt, fix.lat, fix.lon, now, WEATHER_MIN_MOVE_M, WEATHER_MAX_AGE_MS)) {
     return;
   }
-  lastWeather = { at: { lat: fix.lat, lon: fix.lon, time: now } };
+  lastSeriesAt = { lat: fix.lat, lon: fix.lon, time: now };
+  const key = Weather.cacheKey('series', fix.lat, fix.lon, config.weatherModel);
+  const store = wxStoreGet();
+  const cached = Weather.cacheGet(store, key, now, WX_FRESH_MS, WX_MAX_AGE_MS);
+  // A fresh cached series (under an hour old) is used as-is, without a request.
+  if (cached && cached.fresh) {
+    setBoatSeries(cached.data, fix, { fromCache: true, age: cached.age });
+    return;
+  }
   if (weatherAbort) weatherAbort.abort();
   weatherAbort = new AbortController();
   try {
-    const conditions = await Weather.fetchConditions(fix.lat, fix.lon, { signal: weatherAbort.signal, model: config.weatherModel });
-    lastWeather.conditions = conditions;
-    updateConditions(conditions);
+    const series = await Weather.fetchSeries(fix.lat, fix.lon, { model: config.weatherModel, signal: weatherAbort.signal });
+    Weather.cachePut(store, key, series, Date.now(), WX_MAX_ENTRIES, WX_MAX_AGE_MS);
+    wxSave(store);
+    setBoatSeries(series, fix, { fromCache: false, age: 0 });
   } catch (error) {
-    if (error.name !== 'AbortError') $('condMeta').textContent = `Forecast unavailable: ${error.message}`;
+    if (error.name === 'AbortError') return;
+    // Offline or the API failed: fall back to the most recent cached series (up to 72 h).
+    if (cached) setBoatSeries(cached.data, fix, { fromCache: true, age: cached.age });
+    else $('condMeta').textContent = `Forecast unavailable: ${error.message}`;
   }
 }
 
-function updateConditions(c) {
+// Windows the series to start at "now" and show the next 72 hours, then renders.
+function setBoatSeries(series, fix, info) {
+  const start = Weather.nowIndex(series.times, Date.now());
+  boatSeries = {
+    fix: { lat: fix.lat, lon: fix.lon },
+    times: series.times.slice(start, start + FORECAST_WINDOW_H + 1),
+    hours: series.hours.slice(start, start + FORECAST_WINDOW_H + 1),
+    info
+  };
+  if (selectedHour > boatSeries.hours.length - 1) selectedHour = 0;
+  renderTimeline();
+  renderSelectedHour();
+}
+
+// Draws the boat panel, the boat barb and the field for the selected hour.
+function renderSelectedHour() {
+  if (boatSeries && boatSeries.hours[selectedHour]) {
+    const info = selectedHour === 0 ? (boatSeries.info || {}) : {};
+    updateConditions(boatSeries.hours[selectedHour], info);
+  }
+  renderFieldAtHour();
+  updateTimeLabel();
+}
+
+function renderFieldAtHour() {
+  if (!fieldSeries || (!config.windFieldEnabled && !config.waveFieldEnabled)) {
+    clearField();
+    return;
+  }
+  const last = fieldSeries.points[0] ? fieldSeries.points[0].hours.length - 1 : 0;
+  const h = Math.min(selectedHour, last);
+  renderField(fieldSeries.points.map(p => ({ lat: p.lat, lon: p.lon, ...(p.hours[h] || {}) })));
+}
+
+/* ---------- Forecast timeline ---------- */
+
+function renderTimeline() {
+  const show = config.weatherEnabled && boatSeries && boatSeries.hours.length > 1;
+  const bar = $('timeline');
+  if (!show) { bar.classList.add('hidden'); return; }
+  const slider = $('timeSlider');
+  slider.max = String(boatSeries.hours.length - 1);
+  slider.value = String(selectedHour);
+  bar.classList.remove('hidden');
+  updateTimeLabel();
+}
+
+function updateTimeLabel() {
+  if (!boatSeries || !boatSeries.times[selectedHour]) return;
+  const when = new Date(boatSeries.times[selectedHour]);
+  $('timeWhen').textContent = selectedHour === 0 ? 'Now' : `+${selectedHour} h`;
+  $('timeClock').textContent = when.toLocaleString(LOCALE, { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function setHour(hour) {
+  if (!boatSeries) return;
+  selectedHour = Math.max(0, Math.min(hour, boatSeries.hours.length - 1));
+  $('timeSlider').value = String(selectedHour);
+  renderSelectedHour();
+}
+
+function togglePlay() {
+  if (playTimer) { stopPlay(); return; }
+  if (!boatSeries || boatSeries.hours.length < 2) return;
+  $('timePlay').textContent = '⏸';
+  $('timePlay').classList.add('playing');
+  playTimer = setInterval(() => {
+    const max = boatSeries.hours.length - 1;
+    setHour(selectedHour >= max ? 0 : selectedHour + 1);
+  }, 650);
+}
+
+function stopPlay() {
+  if (!playTimer) return;
+  clearInterval(playTimer);
+  playTimer = null;
+  $('timePlay').textContent = '▶';
+  $('timePlay').classList.remove('playing');
+}
+
+function updateConditions(c, info = {}) {
   // Wind stays in knots (the maritime standard the barb is drawn in); air temperature and wave height
   // are fetched metric and converted here, so changing units never needs a new request.
   const tempUnit = config.tempUnits === 'F' ? 'F' : 'C';
@@ -155,7 +280,12 @@ function updateConditions(c) {
     : `${formatNumber(waveHeight, 1, ' ' + waveUnit)}${c.wavePeriod ? ' · ' + formatNumber(c.wavePeriod, 0, ' s') : ''}`;
   const modelName = $('weatherModel').selectedOptions[0] ? $('weatherModel').selectedOptions[0].textContent : '';
   const modelTag = config.weatherModel && config.weatherModel !== 'best_match' ? ` (${modelName})` : '';
-  $('condMeta').textContent = `${c.source}${modelTag} forecast · ${new Date(c.time).toLocaleTimeString(LOCALE)}`;
+  // A cached reading older than the fresh window is labelled with its age so stale data is never
+  // mistaken for the current forecast.
+  const stamp = info.fromCache && info.age > WX_FRESH_MS
+    ? `cached · ${Weather.formatAge(info.age)}`
+    : new Date(c.time).toLocaleTimeString(LOCALE);
+  $('condMeta').textContent = `${c.source}${modelTag} forecast · ${stamp}`;
   updateWindBarb(lastFix, c);
 }
 
@@ -204,8 +334,10 @@ function renderField(points) {
   }
 }
 
-async function requestField() {
+// Fetches the 72 h hourly field for the visible grid (kept in memory), then draws the selected hour.
+async function requestFieldSeries() {
   if (!mapReady || (!config.windFieldEnabled && !config.waveFieldEnabled)) {
+    fieldSeries = null;
     clearField();
     return;
   }
@@ -214,13 +346,18 @@ async function requestField() {
   if (fieldAbort) fieldAbort.abort();
   fieldAbort = new AbortController();
   try {
-    const data = await Weather.fetchField(points, {
+    const raw = await Weather.fetchFieldSeries(points, {
       wind: config.windFieldEnabled,
       wave: config.waveFieldEnabled,
       model: config.weatherModel,
       signal: fieldAbort.signal
     });
-    renderField(data);
+    const start = Weather.nowIndex(raw.times, Date.now());
+    fieldSeries = {
+      times: raw.times.slice(start, start + FORECAST_WINDOW_H + 1),
+      points: raw.points.map(p => ({ lat: p.lat, lon: p.lon, hours: p.hours.slice(start, start + FORECAST_WINDOW_H + 1) }))
+    };
+    renderFieldAtHour();
   } catch (error) {
     if (error.name !== 'AbortError') log(`Wind/wave field unavailable: ${error.message}`);
   }
@@ -230,7 +367,7 @@ async function requestField() {
 function scheduleField() {
   if (!config.windFieldEnabled && !config.waveFieldEnabled) return;
   clearTimeout(fieldTimer);
-  fieldTimer = setTimeout(requestField, 500);
+  fieldTimer = setTimeout(requestFieldSeries, 500);
 }
 
 // Draws the maritime wind barb at the boat, as a non-interactive map marker offset above the hull.
@@ -330,8 +467,8 @@ function initializeMap() {
     });
     mapReady = true;
     if (lastFix) updateMap(lastFix);
-    if (lastFix && lastWeather && lastWeather.conditions) updateWindBarb(lastFix, lastWeather.conditions);
-    requestField();
+    if (lastFix && boatSeries && currentHour()) updateWindBarb(lastFix, currentHour());
+    requestFieldSeries();
   });
   map.on('error', event => {
     const message = event?.error?.message || 'Chart resource error';
@@ -905,28 +1042,33 @@ async function initialize() {
   updateModeRows();
   $('weatherEnabled').addEventListener('change', () => {
     if ($('weatherEnabled').checked) {
-      if (lastFix) requestConditions(lastFix, true);
-      else clearConditions('Forecast for the boat position. Not a substitute for an official marine forecast.');
+      if (lastFix) requestSeries(lastFix, true);
     } else {
+      stopPlay();
+      boatSeries = null;
+      $('timeline').classList.add('hidden');
       clearConditions('Forecast off.');
       updateWindBarb(lastFix, null);
     }
   });
   $('windBarbEnabled').addEventListener('change', () => {
-    updateWindBarb(lastFix, lastWeather && lastWeather.conditions);
+    updateWindBarb(lastFix, currentHour());
   });
   for (const id of ['windFieldEnabled', 'waveFieldEnabled']) {
-    $(id).addEventListener('change', () => { requestField().catch(() => {}); });
+    $(id).addEventListener('change', () => { requestFieldSeries().catch(() => {}); });
   }
   $('weatherModel').addEventListener('change', () => {
-    if (lastFix) requestConditions(lastFix, true);
-    requestField().catch(() => {});
+    if (lastFix) requestSeries(lastFix, true);
+    requestFieldSeries().catch(() => {});
   });
   for (const id of ['tempUnits', 'waveUnits']) {
     $(id).addEventListener('change', () => {
-      if (lastWeather && lastWeather.conditions) updateConditions(lastWeather.conditions);
+      if (boatSeries) renderSelectedHour();
     });
   }
+  $('timeSlider').addEventListener('input', () => { stopPlay(); setHour(Number($('timeSlider').value) || 0); });
+  $('timePlay').addEventListener('click', togglePlay);
+  $('timeNow').addEventListener('click', () => { stopPlay(); setHour(0); });
   $('connect').addEventListener('click', connect);
   $('disconnect').addEventListener('click', disconnect);
   $('serialPort').addEventListener('change', () => saveSelectedPort().catch(error => log(error.message)));

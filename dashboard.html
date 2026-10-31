@@ -202,6 +202,14 @@
     <section class="map-area">
       <div id="map"></div>
       <div id="mapNotice" class="map-notice">The chart will centre on the first position received.</div>
+      <div id="timeline" class="timeline hidden" role="group" aria-label="Forecast time">
+        <button id="timePlay" class="time-play" type="button" title="Play the forecast" aria-label="Play the forecast">▶</button>
+        <div class="time-track">
+          <input id="timeSlider" class="time-slider" type="range" min="0" max="0" value="0" step="1" aria-label="Forecast hour">
+        </div>
+        <div class="time-label"><strong id="timeWhen">Now</strong><span id="timeClock"></span></div>
+        <button id="timeNow" class="time-now" type="button" title="Jump to now">Now</button>
+      </div>
       <div class="map-footer"><span id="eventLog">Dashboard ready.</span><span id="clock"></span></div>
     </section>
   </main>

@@ -141,6 +141,74 @@ assert.equal(Weather.degToCompass(null), null);
   assert.equal(new URL(Weather.fieldForecastUrl(pts, { model: 'gfs_seamless' })).searchParams.get('models'), 'gfs_seamless');
 }
 
+// Cache: key rounding, freshness window, 72 h fallback, eviction and age formatting.
+{
+  const HOUR = 3600000;
+  const now = 1_000_000_000;
+  assert.equal(Weather.cacheKey('cond', 50.7753, -1.3009, 'ecmwf_ifs025'), 'cond:ecmwf_ifs025:50.8,-1.3');
+  assert.equal(Weather.cacheKey('field', 0, 0), 'field:best_match:0.0,0.0');
+
+  const store = {};
+  Weather.cachePut(store, 'k', { windSpeed: 10 }, now, 100, 72 * HOUR);
+  assert.equal(Weather.cacheGet(store, 'k', now, HOUR, 72 * HOUR).fresh, true);
+  // Two hours later: still within 72 h but no longer fresh.
+  const later = Weather.cacheGet(store, 'k', now + 2 * HOUR, HOUR, 72 * HOUR);
+  assert.equal(later.fresh, false);
+  assert.equal(later.age, 2 * HOUR);
+  // Past 72 h: discarded.
+  assert.equal(Weather.cacheGet(store, 'k', now + 73 * HOUR, HOUR, 72 * HOUR), null);
+
+  // Eviction: expired entries dropped on write, and the store capped to the newest N.
+  const aged = { old: { data: 1, time: now - 100 * HOUR } };
+  Weather.cachePut(aged, 'new', 2, now, 100, 72 * HOUR);
+  assert.ok(!('old' in aged) && 'new' in aged);
+  const capped = {};
+  for (let i = 0; i < 5; i++) Weather.cachePut(capped, 'k' + i, i, now + i, 3, 72 * HOUR);
+  assert.equal(Object.keys(capped).length, 3);
+  assert.ok('k4' in capped && !('k0' in capped));
+
+  assert.equal(Weather.formatAge(30 * 1000), 'just now');
+  assert.equal(Weather.formatAge(5 * 60000), '5 min ago');
+  assert.equal(Weather.formatAge(2 * HOUR), '2 h ago');
+  assert.equal(Weather.formatAge(50 * HOUR), '2 d ago');
+}
+
+// Hourly series: URLs, parsing (times tagged UTC), the "now" index and the field series.
+{
+  const u = new URL(Weather.hourlyForecastUrl(50, -1, { model: 'ecmwf_ifs025' }));
+  assert.ok(u.searchParams.get('hourly').includes('wind_gusts_10m'));
+  assert.equal(u.searchParams.get('forecast_days'), '4');
+  assert.equal(u.searchParams.get('models'), 'ecmwf_ifs025');
+
+  const s = Weather.parseSeries(
+    { hourly: { time: ['2026-10-31T12:00', '2026-10-31T13:00'], wind_speed_10m: [10, 12], wind_direction_10m: [180, 190], wind_gusts_10m: [15, 18], temperature_2m: [14, 15], surface_pressure: [1010, 1011] } },
+    { hourly: { time: ['2026-10-31T12:00', '2026-10-31T13:00'], wave_height: [1.0, 1.2], wave_direction: [200, 210], wave_period: [6, 7] } }
+  );
+  assert.equal(s.times.length, 2);
+  assert.equal(s.times[0], '2026-10-31T12:00Z');
+  assert.equal(s.hours[0].windSpeed, 10);
+  assert.equal(s.hours[1].waveHeight, 1.2);
+  assert.equal(s.hours[0].source, 'Open-Meteo');
+  assert.equal(Weather.parseSeries({}, {}).hours.length, 0);
+
+  const times = ['2026-10-31T12:00Z', '2026-10-31T13:00Z', '2026-10-31T14:00Z'];
+  assert.equal(Weather.nowIndex(times, Date.parse('2026-10-31T13:10Z')), 1);
+  assert.equal(Weather.nowIndex(times, Date.parse('2026-10-31T13:40Z')), 2);
+  assert.equal(Weather.nowIndex([], 0), 0);
+
+  const fs = Weather.parseFieldSeries(
+    [{ hourly: { time: times.map(t => t.slice(0, -1)), wind_speed_10m: [10, 11, 12], wind_direction_10m: [180, 185, 190], wind_gusts_10m: [15, 16, 17] } },
+     { hourly: { time: times.map(t => t.slice(0, -1)), wind_speed_10m: [20, 21, 22], wind_direction_10m: [200, 205, 210], wind_gusts_10m: [25, 26, 27] } }],
+    [{ hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [1, 1.1, 1.2], wave_direction: [100, 110, 120] } },
+     { hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [2, 2.1, 2.2], wave_direction: [120, 130, 140] } }],
+    [{ lat: 50, lon: -1 }, { lat: 51, lon: -2 }]
+  );
+  assert.equal(fs.times.length, 3);
+  assert.equal(fs.points.length, 2);
+  assert.equal(fs.points[0].hours[0].windSpeed, 10);
+  assert.equal(fs.points[1].hours[2].waveHeight, 2.2);
+}
+
 // fetchConditions merges both endpoints and throws only when neither has data.
 (async () => {
   const realFetch = global.fetch;
@@ -189,6 +257,18 @@ assert.equal(Weather.degToCompass(null), null);
   const windOnly2 = await Weather.fetchField([{ lat: 50, lon: -1 }], { wind: true, wave: false });
   assert.equal(windOnly2[0].windSpeed, 9);
   assert.equal(windOnly2[0].waveHeight, null);
+
+  // fetchSeries merges the hourly forecast and marine series.
+  global.fetch = async url => ({
+    ok: true,
+    json: async () => url.includes('marine')
+      ? { hourly: { time: ['2026-10-31T12:00'], wave_height: [1.2], wave_direction: [200], wave_period: [6] } }
+      : { hourly: { time: ['2026-10-31T12:00'], wind_speed_10m: [10], wind_direction_10m: [180], wind_gusts_10m: [15], temperature_2m: [14], surface_pressure: [1010] } }
+  });
+  const series = await Weather.fetchSeries(50, -1);
+  assert.equal(series.hours.length, 1);
+  assert.equal(series.hours[0].windSpeed, 10);
+  assert.equal(series.hours[0].waveHeight, 1.2);
 
   global.fetch = realFetch;
   console.log('weather.test.js: all assertions passed');

@@ -179,6 +179,46 @@
     return points;
   }
 
+  /* ---------- Cache (pure; the page backs it with localStorage) ---------- */
+
+  // Cache key rounded to 0.1° (~11 km, about the models' grid) so nearby requests share an entry.
+  function cacheKey(kind, lat, lon, model) {
+    const r = v => (Math.round(v * 10) / 10).toFixed(1);
+    return `${kind}:${model || 'best_match'}:${r(lat)},${r(lon)}`;
+  }
+
+  // Returns the entry when it is within maxAgeMs, flagging whether it is still fresh (within freshMs).
+  function cacheGet(store, key, now, freshMs, maxAgeMs) {
+    const entry = store && store[key];
+    if (!entry || typeof entry.time !== 'number') return null;
+    const age = now - entry.time;
+    if (age < 0 || age > maxAgeMs) return null;
+    return { data: entry.data, time: entry.time, age, fresh: age <= freshMs };
+  }
+
+  // Writes an entry, then drops anything past maxAgeMs and keeps only the newest maxEntries.
+  function cachePut(store, key, data, now, maxEntries, maxAgeMs) {
+    store[key] = { data, time: now };
+    for (const k of Object.keys(store)) {
+      if (typeof store[k].time !== 'number' || now - store[k].time > maxAgeMs) delete store[k];
+    }
+    const keys = Object.keys(store);
+    if (keys.length > maxEntries) {
+      keys.sort((a, b) => store[a].time - store[b].time);
+      for (const k of keys.slice(0, keys.length - maxEntries)) delete store[k];
+    }
+    return store;
+  }
+
+  function formatAge(ms) {
+    const minutes = Math.floor(ms / 60000);
+    if (minutes < 1) return 'just now';
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours} h ago`;
+    return `${Math.round(hours / 24)} d ago`;
+  }
+
   /* ---------- Network ---------- */
 
   async function fetchJson(url, signal) {
@@ -274,10 +314,145 @@
     }));
   }
 
+  /* ---------- Hourly series (forecast timeline) ---------- */
+
+  function at(arr, i) {
+    return arr ? number(arr[i]) : null;
+  }
+
+  function hourlyForecastUrl(lat, lon, opts = {}) {
+    const params = new URLSearchParams({
+      latitude: round(lat),
+      longitude: round(lon),
+      hourly: 'wind_speed_10m,wind_direction_10m,wind_gusts_10m,temperature_2m,surface_pressure',
+      wind_speed_unit: 'kn',
+      temperature_unit: 'celsius',
+      forecast_days: String(opts.days || 4)
+    });
+    if (opts.model && opts.model !== 'best_match') params.set('models', opts.model);
+    return `${FORECAST_ORIGIN}/v1/forecast?${params}`;
+  }
+
+  function hourlyMarineUrl(lat, lon, opts = {}) {
+    const params = new URLSearchParams({
+      latitude: round(lat),
+      longitude: round(lon),
+      hourly: 'wave_height,wave_direction,wave_period',
+      forecast_days: String(opts.days || 4)
+    });
+    return `${MARINE_ORIGIN}/v1/marine?${params}`;
+  }
+
+  function fieldHourlyForecastUrl(points, opts = {}) {
+    const params = new URLSearchParams({
+      latitude: points.map(p => round(p.lat)).join(','),
+      longitude: points.map(p => round(p.lon)).join(','),
+      hourly: 'wind_speed_10m,wind_direction_10m,wind_gusts_10m',
+      wind_speed_unit: 'kn',
+      forecast_days: String(opts.days || 4)
+    });
+    if (opts.model && opts.model !== 'best_match') params.set('models', opts.model);
+    return `${FORECAST_ORIGIN}/v1/forecast?${params}`;
+  }
+
+  function fieldHourlyMarineUrl(points, opts = {}) {
+    const params = new URLSearchParams({
+      latitude: points.map(p => round(p.lat)).join(','),
+      longitude: points.map(p => round(p.lon)).join(','),
+      hourly: 'wave_height,wave_direction',
+      forecast_days: String(opts.days || 4)
+    });
+    return `${MARINE_ORIGIN}/v1/marine?${params}`;
+  }
+
+  // The hourly API returns GMT times like "2026-10-31T14:00"; a trailing Z makes them unambiguous UTC,
+  // which the page then shows in the viewer's own locale.
+  function parseSeries(forecastJson, marineJson) {
+    const f = (forecastJson && forecastJson.hourly) || {};
+    const m = (marineJson && marineJson.hourly) || {};
+    const raw = f.time || m.time || [];
+    const times = raw.map(t => `${t}Z`);
+    const hours = times.map((t, i) => ({
+      time: t,
+      source: 'Open-Meteo',
+      windSpeed: at(f.wind_speed_10m, i),
+      windDir: at(f.wind_direction_10m, i),
+      windGust: at(f.wind_gusts_10m, i),
+      airTemp: at(f.temperature_2m, i),
+      pressure: at(f.surface_pressure, i),
+      waveHeight: at(m.wave_height, i),
+      waveDir: at(m.wave_direction, i),
+      wavePeriod: at(m.wave_period, i)
+    }));
+    return { times, hours };
+  }
+
+  function parseFieldSeries(forecastJson, marineJson, points) {
+    const fList = Array.isArray(forecastJson) ? forecastJson : (forecastJson ? [forecastJson] : []);
+    const mList = Array.isArray(marineJson) ? marineJson : (marineJson ? [marineJson] : []);
+    let times = [];
+    const series = points.map((p, idx) => {
+      const fh = (fList[idx] && fList[idx].hourly) || {};
+      const mh = (mList[idx] && mList[idx].hourly) || {};
+      const t = fh.time || mh.time || [];
+      if (t.length > times.length) times = t;
+      const hours = t.map((_, i) => ({
+        windSpeed: at(fh.wind_speed_10m, i),
+        windDir: at(fh.wind_direction_10m, i),
+        windGust: at(fh.wind_gusts_10m, i),
+        waveHeight: at(mh.wave_height, i),
+        waveDir: at(mh.wave_direction, i)
+      }));
+      return { lat: p.lat, lon: p.lon, hours };
+    });
+    return { times: times.map(t => `${t}Z`), points: series };
+  }
+
+  // Index of the hour nearest to `now` (defaults to the current time), used to start the window at "now".
+  function nowIndex(times, now) {
+    const t = now === undefined ? Date.now() : now;
+    if (!times || !times.length) return 0;
+    let best = 0;
+    let bestDiff = Infinity;
+    for (let i = 0; i < times.length; i++) {
+      const diff = Math.abs(new Date(times[i]).getTime() - t);
+      if (diff < bestDiff) { bestDiff = diff; best = i; }
+    }
+    return best;
+  }
+
+  async function fetchSeries(lat, lon, options = {}) {
+    const [forecast, marine] = await Promise.allSettled([
+      fetchJson(hourlyForecastUrl(lat, lon, { model: options.model, days: options.days }), options.signal),
+      fetchJson(hourlyMarineUrl(lat, lon, { days: options.days }), options.signal)
+    ]);
+    const series = parseSeries(
+      forecast.status === 'fulfilled' ? forecast.value : null,
+      marine.status === 'fulfilled' ? marine.value : null
+    );
+    if (!series.hours.length) throw new Error('no forecast series for this position');
+    return series;
+  }
+
+  async function fetchFieldSeries(points, options = {}) {
+    const [forecast, marine] = await Promise.allSettled([
+      options.wind !== false ? fetchJson(fieldHourlyForecastUrl(points, { model: options.model, days: options.days }), options.signal) : Promise.resolve(null),
+      options.wave === true ? fetchJson(fieldHourlyMarineUrl(points, { days: options.days }), options.signal) : Promise.resolve(null)
+    ]);
+    return parseFieldSeries(
+      forecast.status === 'fulfilled' ? forecast.value : null,
+      marine.status === 'fulfilled' ? marine.value : null,
+      points
+    );
+  }
+
   return {
     FORECAST_ORIGIN, MARINE_ORIGIN,
     forecastUrl, marineUrl, parseForecast, parseMarine,
+    hourlyForecastUrl, hourlyMarineUrl, fieldHourlyForecastUrl, fieldHourlyMarineUrl,
+    parseSeries, parseFieldSeries, nowIndex, fetchSeries, fetchFieldSeries,
     degToCompass, distanceMeters, needsRefresh, fetchConditions, windBarbSvg,
-    waveArrowSvg, gridPoints, fieldForecastUrl, fieldMarineUrl, parseFieldForecast, parseFieldMarine, fetchField
+    waveArrowSvg, gridPoints, fieldForecastUrl, fieldMarineUrl, parseFieldForecast, parseFieldMarine, fetchField,
+    cacheKey, cacheGet, cachePut, formatAge
   };
 });
