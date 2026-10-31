@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1
+
+- **Offline weather:** the conditions, the wind/wave field and the timeline now stay from cache when the network drops (the field is kept too), marked "offline". They refresh when the connection returns and every few hours otherwise. Fixes the field being cleared and its cache overwritten while offline.
+
 ## 0.6.0
 
 - **Forecast timeline:** a slider (with play) at the bottom of the chart scrubs the next 72 hours, so the wind, waves and conditions animate across the map.

@@ -439,11 +439,15 @@
       options.wind !== false ? fetchJson(fieldHourlyForecastUrl(points, { model: options.model, days: options.days }), options.signal) : Promise.resolve(null),
       options.wave === true ? fetchJson(fieldHourlyMarineUrl(points, { days: options.days }), options.signal) : Promise.resolve(null)
     ]);
-    return parseFieldSeries(
+    const series = parseFieldSeries(
       forecast.status === 'fulfilled' ? forecast.value : null,
       marine.status === 'fulfilled' ? marine.value : null,
       points
     );
+    // Both endpoints are best-effort (allSettled), so an empty result means the fetch failed (offline);
+    // throw so the caller keeps the cached field instead of overwriting it with nothing.
+    if (!series.times.length) throw new Error('no forecast field for this area');
+    return series;
   }
 
   return {

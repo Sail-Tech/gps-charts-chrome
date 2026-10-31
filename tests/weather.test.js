@@ -270,6 +270,10 @@ assert.equal(Weather.degToCompass(null), null);
   assert.equal(series.hours[0].windSpeed, 10);
   assert.equal(series.hours[0].waveHeight, 1.2);
 
+  // Offline (both endpoints fail), fetchFieldSeries rejects so the cached field is not overwritten.
+  global.fetch = async () => { throw new Error('offline'); };
+  await assert.rejects(Weather.fetchFieldSeries([{ lat: 50, lon: -1 }], { wind: true }), /no forecast field/);
+
   global.fetch = realFetch;
   console.log('weather.test.js: all assertions passed');
 })().catch(error => {

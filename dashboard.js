@@ -53,6 +53,7 @@ let boatSeries = null;        // { fix, times:[], hours:[{...}], info }
 let fieldSeries = null;       // { times:[], points:[{lat,lon,hours:[{...}]}] }
 let selectedHour = 0;         // index into the forecast window (0 = now)
 let playTimer = null;
+let weatherRefreshTimer = null;
 let weatherAbort = null;
 let windMarker = null;
 let fieldMarkers = [];
@@ -69,6 +70,8 @@ const WX_FRESH_MS = 60 * 60 * 1000;
 const WX_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 const WX_MAX_ENTRIES = 600;
 const WX_CACHE_KEY = 'gps-charts-weather-cache';
+const WX_FIELD_KEY = 'gps-charts-field-series';     // last field series, kept for offline reloads
+const WEATHER_REFRESH_MS = 3 * 60 * 60 * 1000;      // background refresh when online (forecasts update a few times a day)
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
   log(`${message}: ${String(raw).slice(0, 90)}`);
@@ -141,6 +144,22 @@ function wxSave(store) {
 function wxStoreGet() {
   if (!wxStore) wxStore = wxLoad();
   return wxStore;
+}
+
+// The field series is large, so only the latest one is persisted (overwritten each fetch); it lets the
+// field reappear after an offline reload.
+function saveFieldSeries(series, model) {
+  try { localStorage.setItem(WX_FIELD_KEY, JSON.stringify({ time: Date.now(), model: model || 'best_match', series })); } catch (_) {}
+}
+
+function loadFieldSeries(model) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WX_FIELD_KEY) || 'null');
+    if (!raw || Date.now() - raw.time > WX_MAX_AGE_MS) return null;
+    if (raw.model !== (model || 'best_match')) return null;
+    if (!raw.series || !raw.series.points || !raw.series.points[0] || !raw.series.points[0].hours.length) return null;
+    return raw.series;
+  } catch (_) { return null; }
 }
 
 // The hour the timeline is pointing at (0 = now), used by the panel, the boat barb and the field.
@@ -259,6 +278,13 @@ function stopPlay() {
   $('timePlay').classList.remove('playing');
 }
 
+// Forces a fresh fetch of the boat series and the field (used on reconnect and on the background timer).
+function refreshWeather() {
+  if (!lastFix) return;
+  requestSeries(lastFix, true);
+  requestFieldSeries().catch(() => {});
+}
+
 function updateConditions(c, info = {}) {
   // Wind stays in knots (the maritime standard the barb is drawn in); air temperature and wave height
   // are fetched metric and converted here, so changing units never needs a new request.
@@ -282,10 +308,11 @@ function updateConditions(c, info = {}) {
   const modelTag = config.weatherModel && config.weatherModel !== 'best_match' ? ` (${modelName})` : '';
   // A cached reading older than the fresh window is labelled with its age so stale data is never
   // mistaken for the current forecast.
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
   const stamp = info.fromCache && info.age > WX_FRESH_MS
     ? `cached · ${Weather.formatAge(info.age)}`
     : new Date(c.time).toLocaleTimeString(LOCALE);
-  $('condMeta').textContent = `${c.source}${modelTag} forecast · ${stamp}`;
+  $('condMeta').textContent = `${c.source}${modelTag} forecast · ${stamp}${offline ? ' · offline' : ''}`;
   updateWindBarb(lastFix, c);
 }
 
@@ -341,6 +368,11 @@ async function requestFieldSeries() {
     clearField();
     return;
   }
+  // Show the last saved field at once (e.g. after an offline reload) while a fresh one loads.
+  if (!fieldSeries) {
+    const saved = loadFieldSeries(config.weatherModel);
+    if (saved) { fieldSeries = saved; renderFieldAtHour(); }
+  }
   const b = map.getBounds();
   const points = Weather.gridPoints({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() });
   if (fieldAbort) fieldAbort.abort();
@@ -357,9 +389,11 @@ async function requestFieldSeries() {
       times: raw.times.slice(start, start + FORECAST_WINDOW_H + 1),
       points: raw.points.map(p => ({ lat: p.lat, lon: p.lon, hours: p.hours.slice(start, start + FORECAST_WINDOW_H + 1) }))
     };
+    if (fieldSeries.points[0] && fieldSeries.points[0].hours.length) saveFieldSeries(fieldSeries, config.weatherModel);
     renderFieldAtHour();
   } catch (error) {
-    if (error.name !== 'AbortError') log(`Wind/wave field unavailable: ${error.message}`);
+    // Offline or the API failed: keep whatever field is already shown (in memory or just restored).
+    if (error.name !== 'AbortError') log('Wind/wave field unavailable — showing the last cached field.');
   }
 }
 
@@ -1069,6 +1103,10 @@ async function initialize() {
   $('timeSlider').addEventListener('input', () => { stopPlay(); setHour(Number($('timeSlider').value) || 0); });
   $('timePlay').addEventListener('click', togglePlay);
   $('timeNow').addEventListener('click', () => { stopPlay(); setHour(0); });
+  // Refresh as soon as the network returns, and otherwise every few hours in the background.
+  window.addEventListener('online', refreshWeather);
+  window.addEventListener('offline', () => { if (boatSeries) renderSelectedHour(); });
+  weatherRefreshTimer = setInterval(() => { if (navigator.onLine) refreshWeather(); }, WEATHER_REFRESH_MS);
   $('connect').addEventListener('click', connect);
   $('disconnect').addEventListener('click', disconnect);
   $('serialPort').addEventListener('change', () => saveSelectedPort().catch(error => log(error.message)));
