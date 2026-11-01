@@ -63,9 +63,11 @@
   }
 
   class Parser {
-    constructor(onFix, onError) {
+    constructor(onFix, onError, onAis) {
       this.onFix = typeof onFix === 'function' ? onFix : function () {};
       this.onError = typeof onError === 'function' ? onError : function () {};
+      // AIS sentences (!AIVDM other vessels, !AIVDO own vessel) are passed on whole for ais.js.
+      this.onAis = typeof onAis === 'function' ? onAis : function () {};
       this.buffer = '';
       this.lastFix = null;
       this.motion = {};
@@ -101,6 +103,10 @@
       const type = fields[0].slice(-3).toUpperCase();
       let fix = null;
 
+      if (type === 'VDM' || type === 'VDO') {
+        this.onAis(sentence, source);
+        return null;
+      }
       if (type === 'RMC') {
         if (fields[2] !== 'A') return null;
         const lat = nmeaCoordinate(fields[3], fields[4], true);

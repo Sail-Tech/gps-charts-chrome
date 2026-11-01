@@ -86,6 +86,15 @@
       </section>
 
       <section>
+        <h2>AIS targets</h2>
+        <p id="aisSummary" class="muted">No AIS targets yet. AIS sentences (!AIVDM) from the boat's receiver arrive over the WebSocket, the bridge or the serial port, like the GPS.</p>
+        <ol id="aisList" class="ais-list"></ol>
+        <label class="check"><input id="aisEnabled" type="checkbox" checked> Show AIS targets on the chart</label>
+        <label>Course vector length (minutes, 0 = none) <input id="aisVectorMinutes" type="number" min="0" max="60" step="1"></label>
+        <label class="check"><input id="aisDemo" type="checkbox"> AIS demo: simulated vessels around the boat (testing only)</label>
+      </section>
+
+      <section>
         <h2>GPS input</h2>
         <label>Connection mode
           <select id="connectionMode">
@@ -226,6 +235,8 @@
   <script src="nmea.js"></script>
   <script src="weather.js"></script>
   <script src="seamarks.js"></script>
+  <script src="ais.js"></script>
+  <script src="targets.js"></script>
   <script src="serialports.js"></script>
   <script src="dashboard.js"></script>
 </body>

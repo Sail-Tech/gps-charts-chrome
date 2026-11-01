@@ -13,6 +13,10 @@
 .info-popup .maplibregl-popup-content { padding: 8px 11px; border-radius: 10px; background: rgba(10, 38, 56, 0.92); color: #fff; font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
 .info-popup .maplibregl-popup-content strong { display: block; font-size: 13px; margin-bottom: 2px; }
 .info-popup .maplibregl-popup-tip { border-top-color: rgba(10, 38, 56, 0.92); border-bottom-color: rgba(10, 38, 56, 0.92); }
+.ais-list { list-style: none; margin: 8px 0 4px; padding: 0; }
+.ais-list li button { display: flex; justify-content: space-between; gap: 8px; width: 100%; margin: 0 0 4px; padding: 6px 8px; border-radius: 5px; background: #edf3f6; border: 1px solid transparent; font-weight: 500; font-size: 12px; text-align: left; }
+.ais-list li button span:last-child { color: #69808c; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ais-list li.danger button { border-color: #d62828; background: #fdecec; }
 .info-popup .info-note { margin-top: 4px; color: #a9c7d6; font-size: 10px; }
 
 /* Forecast timeline: a translucent bar over the chart with a play button and a styled time slider. */

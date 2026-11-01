@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.10.0
+
+- **AIS targets from the boat's own receiver:** `!AIVDM` sentences arriving over the WebSocket, the bridge or the serial port (until now ignored) are decoded: Class A and B positions, static and voyage data, aids to navigation, SAR aircraft and safety messages, with multi-sentence messages joined. No online AIS service is used.
+- **On the chart:** vessels coloured by type and turned to their heading, Class B smaller, aids to navigation as diamonds, AIS-SART/MOB/EPIRB as a crossed red circle; course vectors (6 minutes by default), names from zoom 12; silent targets fade and are removed after 20 minutes.
+- **CPA/TCPA:** vessels closing to under 0.5 NM within 20 minutes get a red ring and lead the new **AIS targets** list in the sidebar. Hover over or tap a target for its details, range, bearing and CPA/TCPA.
+- **AIS demo:** an option sends nine simulated *DEMO* vessels as real AIS sentences through the same decoder, for testing without a receiver. It is never saved.
+
 ## 0.9.0
 
 - **Read-outs on hover or tap:** every chart symbol now explains itself. A wind barb gives the wind speed, direction and gusts; a wave arrow the height, direction and period; a current arrow the speed and the direction it flows to. It works with a mouse (hover) and a finger (tap; the read-out stays until you tap elsewhere), and replaces the old "?" cursor and the single combined tooltip per field point.

@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_FIX = { lat: 50.775, lon: -1.3 };
 const SETTING_IDS = [
   'connectionMode', 'provider', 'zoom', 'autoCenterProvider', 'updateSeconds', 'wsUrl', 'serialBaud',
-  'bathymetryEnabled', 'bathymetryShading', 'depthUnits', 'seamarkInfoEnabled',
+  'bathymetryEnabled', 'bathymetryShading', 'depthUnits', 'seamarkInfoEnabled', 'aisEnabled', 'aisVectorMinutes',
   'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'currentFieldEnabled', 'tempUnits', 'waveUnits',
   'cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays', 'prefetchLevels'
 ];
@@ -58,6 +58,14 @@ let weatherAbort = null;
 let windMarker = null;
 let currentMarker = null;
 let infoPopup = null;
+let infoAisMmsi = null;            // the AIS target whose read-out is open, refreshed with each update
+const aisDecoder = new AIS.Decoder();
+const aisTargets = new AISTargets.Targets();
+let aisRenderTimer = null;
+let aisDemoTimer = null;
+let aisDemoVessels = [];
+let aisDemoCentre = null;
+const AIS_DEMO_SOURCE = 'AIS demo';
 let infoSticky = false;
 let infoTappedAt = 0;
 let seamarkChunks = null;          // chunk id -> { time, features }, mirrored in localStorage
@@ -88,7 +96,7 @@ const WEATHER_REFRESH_MS = 3 * 60 * 60 * 1000;      // background refresh when o
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
   log(`${message}: ${String(raw).slice(0, 90)}`);
-});
+}, receiveAis);
 
 function log(message) {
   $('eventLog').textContent = `${new Date().toLocaleTimeString(LOCALE)} · ${message}`;
@@ -509,10 +517,11 @@ function infoHtml(info) {
 
 // Shows the read-out at a position. A hover read-out follows the pointer and goes on leave; a tapped
 // (sticky) one stays until the next tap elsewhere, so it also works with a finger.
-function showInfo(lngLat, info, sticky, offset = [0, 0]) {
+function showInfo(lngLat, info, sticky, offset = [0, 0], aisMmsi = null) {
   if (!map || !lngLat) return;
   if (!sticky && infoSticky) return;
   infoSticky = sticky;
+  infoAisMmsi = aisMmsi;
   if (!infoPopup) {
     infoPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '280px', className: 'info-popup' });
   }
@@ -523,6 +532,7 @@ function hideInfo(force = false) {
   if (!infoPopup || (infoSticky && !force)) return;
   infoPopup.remove();
   infoSticky = false;
+  infoAisMmsi = null;
 }
 
 // Weather symbols inside a marker element carry their read-out in data-info.
@@ -641,12 +651,314 @@ function addSeamarkInfoLayer() {
   });
   map.on('click', event => {
     if (Date.now() - infoTappedAt < 400) return;   // a weather symbol was just tapped
-    const hits = map.getLayer('seamark-hit') ? map.queryRenderedFeatures(event.point, { layers: ['seamark-hit'] }) : [];
-    if (hits.length) showInfo(hits[0].geometry.coordinates, seamarkInfo(hits[0]), true);
+    const layers = ['ais-targets', 'seamark-hit'].filter(id => map.getLayer(id));
+    const hits = layers.length ? map.queryRenderedFeatures(event.point, { layers }) : [];
+    const ais = hits.find(f => f.layer.id === 'ais-targets');
+    if (ais) showAisInfo(ais.properties.mmsi, true);
+    else if (hits.length) showInfo(hits[0].geometry.coordinates, seamarkInfo(hits[0]), true);
     else hideInfo(true);
   });
   updateSeamarkSource();
   requestSeamarkInfo();
+}
+
+/* ---------- AIS targets (the boat's own receiver, over the WebSocket, bridge or serial port) ---------- */
+
+function receiveAis(sentence, source) {
+  const message = aisDecoder.push(sentence);
+  if (!message) return;
+  if (message.kind === 'safety') {
+    log(`AIS safety message from ${message.mmsi}: ${message.text}`);
+    return;
+  }
+  if (aisTargets.update(message, source)) scheduleAisRender();
+}
+
+// At most two redraws a second, however many sentences arrive.
+function scheduleAisRender() {
+  if (aisRenderTimer) return;
+  aisRenderTimer = setTimeout(() => { aisRenderTimer = null; renderAis(); }, 500);
+}
+
+const AIS_COLOURS = {
+  cargo: '#2f9e44', tanker: '#c92a2a', passenger: '#1c7ed6', fishing: '#e8590c', pleasure: '#ae3ec9',
+  service: '#0c8599', hsc: '#f59f00', sar: '#f59f00', unknown: '#868e96', aton: '#343a40', emergency: '#e03131'
+};
+
+// Chart symbols drawn once on a canvas: a pointed hull for vessels (north up, rotated by the layer), a
+// diamond for aids to navigation and a crossed circle for SART, MOB and EPIRB.
+function aisImage(kind, colour) {
+  const size = 48;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const g = canvas.getContext('2d');
+  g.lineJoin = 'round';
+  g.lineWidth = 3;
+  g.strokeStyle = '#ffffff';
+  g.fillStyle = colour;
+  g.beginPath();
+  if (kind === 'vessel') {
+    g.moveTo(24, 4); g.lineTo(36, 40); g.lineTo(24, 33); g.lineTo(12, 40); g.closePath();
+  } else if (kind === 'aton') {
+    g.moveTo(24, 8); g.lineTo(40, 24); g.lineTo(24, 40); g.lineTo(8, 24); g.closePath();
+  } else {
+    g.arc(24, 24, 15, 0, Math.PI * 2);
+  }
+  g.stroke();
+  g.fill();
+  if (kind === 'emergency') {
+    g.strokeStyle = '#ffffff';
+    g.beginPath(); g.moveTo(15, 15); g.lineTo(33, 33); g.moveTo(33, 15); g.lineTo(15, 33); g.stroke();
+  }
+  return g.getImageData(0, 0, size, size);
+}
+
+function addAisLayers() {
+  for (const [name, colour] of Object.entries(AIS_COLOURS)) {
+    const kind = name === 'aton' ? 'aton' : name === 'emergency' ? 'emergency' : 'vessel';
+    if (!map.hasImage(`ais-${name}`)) map.addImage(`ais-${name}`, aisImage(kind, colour), { pixelRatio: 2 });
+  }
+  const empty = { type: 'FeatureCollection', features: [] };
+  map.addSource('ais', { type: 'geojson', data: empty });
+  map.addSource('ais-vectors', { type: 'geojson', data: empty });
+  const visibility = config.aisEnabled ? 'visible' : 'none';
+  map.addLayer({
+    id: 'ais-vectors', type: 'line', source: 'ais-vectors', layout: { visibility, 'line-cap': 'round' },
+    paint: { 'line-color': ['get', 'colour'], 'line-width': 1.6, 'line-opacity': ['case', ['get', 'stale'], 0.35, 0.9] }
+  });
+  map.addLayer({
+    id: 'ais-danger', type: 'circle', source: 'ais', filter: ['==', ['get', 'danger'], true], layout: { visibility },
+    paint: { 'circle-radius': 15, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#e03131', 'circle-stroke-width': 2.5 }
+  });
+  map.addLayer({
+    id: 'ais-targets', type: 'symbol', source: 'ais',
+    layout: {
+      visibility,
+      'icon-image': ['get', 'icon'],
+      'icon-size': ['get', 'size'],
+      'icon-rotate': ['get', 'rotation'],
+      'icon-rotation-alignment': 'map',
+      'icon-allow-overlap': true,
+      'icon-ignore-placement': true,
+      'text-field': ['step', ['zoom'], '', 12, ['get', 'label']],
+      'text-font': ['Noto Sans Medium'],
+      'text-size': 11,
+      'text-offset': [0, 1.3],
+      'text-anchor': 'top',
+      'text-optional': true
+    },
+    paint: {
+      'icon-opacity': ['case', ['get', 'stale'], 0.4, 1],
+      'text-color': '#073b55',
+      'text-halo-color': '#ffffff',
+      'text-halo-width': 1.4,
+      'text-opacity': ['case', ['get', 'stale'], 0.5, 1]
+    }
+  });
+  map.on('mousemove', 'ais-targets', event => {
+    map.getCanvas().style.cursor = 'pointer';
+    const feature = event.features && event.features[0];
+    if (feature) showAisInfo(feature.properties.mmsi, false);
+  });
+  map.on('mouseleave', 'ais-targets', () => {
+    map.getCanvas().style.cursor = '';
+    hideInfo();
+  });
+  renderAis();
+}
+
+function aisLabel(target) {
+  return target.name || `MMSI ${target.mmsi}`;
+}
+
+function aisInfo(target, now = Date.now()) {
+  const lines = [];
+  const special = AIS.specialMmsi(target.mmsi);
+  if (special) lines.push(special);
+  if (target.kind === 'aton') {
+    lines.push(`Aid to navigation${target.virtual ? ' (virtual)' : ''}${target.offPosition ? ' · off position' : ''}`);
+  } else {
+    lines.push(`${AIS.shipTypeName(target.shipType) || 'Vessel'} · Class ${target.class || '?'}`);
+  }
+  lines.push(`MMSI ${target.mmsi}${target.callsign ? ' · ' + target.callsign : ''}${target.imo ? ' · IMO ' + target.imo : ''}`);
+  const motion = [];
+  if (Number.isFinite(target.sog)) motion.push(`SOG ${target.sog.toFixed(1)} kn`);
+  if (Number.isFinite(target.cog)) motion.push(`COG ${Math.round(target.cog)}°`);
+  if (Number.isFinite(target.heading)) motion.push(`HDG ${target.heading}°`);
+  if (motion.length && target.kind !== 'aton') lines.push(motion.join(' · '));
+  const status = AIS.NAV_STATUS[target.navStatus];
+  if (target.class === 'A' && status) lines.push(status);
+  if (target.destination) {
+    const e = target.eta;
+    const eta = e ? `, ETA ${String(e.day).padStart(2, '0')}/${String(e.month).padStart(2, '0')}${e.hour !== null ? ` ${String(e.hour).padStart(2, '0')}:${String(e.minute ?? 0).padStart(2, '0')} UTC` : ''}` : '';
+    lines.push(`To ${target.destination}${eta}`);
+  }
+  const length = (target.toBow || 0) + (target.toStern || 0);
+  const beam = (target.toPort || 0) + (target.toStarboard || 0);
+  if (length) lines.push(`${length} × ${beam} m${target.draught ? `, draught ${target.draught} m` : ''}`);
+  const rel = AISTargets.relative(lastFix, target);
+  if (rel) {
+    lines.push(`${rel.rangeNm.toFixed(2)} NM at ${Math.round(rel.bearing)}° from the boat`);
+    if (rel.tcpaMin > 0 && target.kind !== 'aton') {
+      lines.push(`CPA ${rel.cpaNm.toFixed(2)} NM in ${Math.round(rel.tcpaMin)} min${AISTargets.isDangerous(rel) ? ' · closing' : ''}`);
+    }
+  }
+  const age = Math.max(0, Math.round((now - target.lastPosition) / 1000));
+  lines.push(`Last report ${age < 120 ? age + ' s' : Math.round(age / 60) + ' min'} ago · ${target.source || 'AIS'}`);
+  return { title: aisLabel(target), lines, note: 'AIS · not a substitute for a proper lookout' };
+}
+
+function showAisInfo(mmsi, sticky) {
+  const target = aisTargets.get(mmsi);
+  if (!target) return;
+  showInfo([target.lon, target.lat], aisInfo(target), sticky, [0, 0], target.mmsi);
+}
+
+function renderAis() {
+  if (!mapReady || !map.getSource('ais')) return;
+  const now = Date.now();
+  const visibility = config.aisEnabled ? 'visible' : 'none';
+  for (const id of ['ais-vectors', 'ais-danger', 'ais-targets']) {
+    if (map.getLayer(id) && map.getLayoutProperty(id, 'visibility') !== visibility) map.setLayoutProperty(id, 'visibility', visibility);
+  }
+  const targets = aisTargets.list(now);
+  const minutes = Number(config.aisVectorMinutes) || 0;
+  const points = [];
+  const vectors = [];
+  const rows = [];
+  for (const t of targets) {
+    const category = AIS.category(t);
+    const stale = AISTargets.isStale(t, now);
+    const rel = AISTargets.relative(lastFix, t);
+    const danger = !stale && t.kind !== 'aton' && AISTargets.isDangerous(rel);
+    points.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [t.lon, t.lat] },
+      properties: {
+        mmsi: t.mmsi, icon: `ais-${category}`, label: aisLabel(t), stale, danger,
+        rotation: t.kind === 'aton' ? 0 : (t.heading ?? t.cog ?? 0),
+        size: t.kind === 'aton' ? 0.8 : t.class === 'B' ? 0.75 : 1
+      }
+    });
+    const end = minutes > 0 && t.kind !== 'aton' ? AISTargets.project(t, minutes) : null;
+    if (end) {
+      vectors.push({
+        type: 'Feature',
+        geometry: { type: 'LineString', coordinates: [[t.lon, t.lat], [end.lon, end.lat]] },
+        properties: { colour: AIS_COLOURS[category], stale }
+      });
+    }
+    rows.push({ t, rel, danger, stale });
+  }
+  map.getSource('ais').setData({ type: 'FeatureCollection', features: points });
+  map.getSource('ais-vectors').setData({ type: 'FeatureCollection', features: vectors });
+  if (infoAisMmsi !== null && infoPopup && infoPopup.isOpen()) {
+    const open = aisTargets.get(infoAisMmsi);
+    if (open) infoPopup.setLngLat([open.lon, open.lat]).setHTML(infoHtml(aisInfo(open, now)));
+    else hideInfo(true);
+  }
+  renderAisList(rows);
+}
+
+// The sidebar list: closing targets first, then the nearest (or by name without a GPS fix).
+function renderAisList(rows) {
+  const vessels = rows.filter(r => r.t.kind !== 'aton');
+  const closing = vessels.filter(r => r.danger).length;
+  const demo = aisDemoTimer ? ' · demo running (simulated vessels)' : '';
+  $('aisSummary').textContent = rows.length
+    ? `${vessels.length} vessel${vessels.length === 1 ? '' : 's'}, ${rows.length - vessels.length} aid${rows.length - vessels.length === 1 ? '' : 's'} to navigation${closing ? ` · ${closing} closing` : ''}${config.aisEnabled ? '' : ' · hidden on the chart'}${demo}`
+    : `No AIS targets yet. AIS sentences (!AIVDM) from the boat's receiver arrive over the WebSocket, the bridge or the serial port, like the GPS.${demo}`;
+  vessels.sort((a, b) => (b.danger - a.danger) || ((a.rel ? a.rel.rangeNm : 0) - (b.rel ? b.rel.rangeNm : 0)) || aisLabel(a.t).localeCompare(aisLabel(b.t)));
+  const list = $('aisList');
+  list.textContent = '';
+  for (const r of vessels.slice(0, 10)) {
+    const item = document.createElement('li');
+    if (r.danger) item.className = 'danger';
+    const button = document.createElement('button');
+    button.type = 'button';
+    const name = document.createElement('span');
+    name.textContent = aisLabel(r.t);
+    const detail = document.createElement('span');
+    detail.textContent = r.rel
+      ? `${r.rel.rangeNm.toFixed(1)} NM${r.rel.tcpaMin > 0 ? ` · CPA ${r.rel.cpaNm.toFixed(1)}` : ''}`
+      : (Number.isFinite(r.t.sog) ? `${r.t.sog.toFixed(1)} kn` : '');
+    button.append(name, detail);
+    button.addEventListener('click', () => {
+      $('followBoat').checked = false;
+      map.easeTo({ center: [r.t.lon, r.t.lat], duration: 600 });
+      infoTappedAt = Date.now();
+      showAisInfo(r.t.mmsi, true);
+    });
+    item.append(button);
+    list.append(item);
+  }
+}
+
+/* ---------- AIS demo: simulated vessels sent as real !AIVDM sentences through the same path ---------- */
+
+function startAisDemo() {
+  stopAisDemo(false);
+  const centre = lastFix || (map ? { lat: map.getCenter().lat, lon: map.getCenter().lng } : DEFAULT_FIX);
+  aisDemoCentre = { lat: centre.lat, lon: centre.lon };
+  const k = Math.cos(centre.lat * Math.PI / 180);
+  // Offsets in NM east and north of the boat; names say DEMO so they are never taken for real vessels.
+  const place = (east, north) => ({ lat: centre.lat + north / 60, lon: centre.lon + east / (60 * k) });
+  const vessel = (n, extra) => ({ mmsi: 999000100 + n, class: 'A', navStatus: 0, every: 3, ...extra, next: 0, nextStatic: n * 0.7 });
+  aisDemoVessels = [
+    vessel(1, { name: 'DEMO CARGO', shipType: 70, callsign: 'DEMO1', toBow: 150, toStern: 40, toPort: 14, toStarboard: 14, draught: 9.5, destination: 'SOUTHAMPTON', ...place(2.4, 2.4), sog: 12, cog: 225 }),
+    vessel(2, { name: 'DEMO TANKER', shipType: 80, callsign: 'DEMO2', toBow: 180, toStern: 50, toPort: 18, toStarboard: 18, draught: 11.2, destination: 'FAWLEY', ...place(-4, 0.5), sog: 9, cog: 80 }),
+    vessel(3, { name: 'DEMO FERRY', shipType: 60, callsign: 'DEMO3', toBow: 90, toStern: 20, toPort: 10, toStarboard: 10, destination: 'COWES', ...place(0.2, -2.5), sog: 16, cog: 0 }),
+    vessel(4, { name: 'DEMO FISHER', shipType: 30, navStatus: 7, toBow: 14, toStern: 6, toPort: 3, toStarboard: 3, ...place(1.5, 0), sog: 3, cog: 160 }),
+    vessel(5, { name: 'DEMO TUG', shipType: 52, toBow: 20, toStern: 10, toPort: 5, toStarboard: 5, ...place(0, 1.8), sog: 7, cog: 200, turn: 1 }),
+    vessel(6, { name: 'DEMO ANCHORED', shipType: 70, navStatus: 1, every: 20, toBow: 120, toStern: 30, toPort: 12, toStarboard: 12, ...place(1.1, -0.9), sog: 0, cog: null, heading: 300 }),
+    vessel(7, { name: 'DEMO YACHT', class: 'B', shipType: 36, every: 10, toBow: 9, toStern: 3, toPort: 2, toStarboard: 2, ...place(-0.6, 0.6), sog: 5.5, cog: 120 }),
+    vessel(8, { name: 'DEMO RIB', class: 'B', shipType: 37, every: 10, toBow: 6, toStern: 2, toPort: 1, toStarboard: 1, ...place(-0.8, -0.8), sog: 18, cog: 60 }),
+    { mmsi: 999000199, aton: true, name: 'DEMO BUOY', aidType: 13, virtual: true, every: 30, next: 0, ...place(0, 0.6) }
+  ];
+  for (const v of aisDemoVessels) if (!v.aton && v.heading === undefined) v.heading = v.cog;
+  aisDemoTimer = setInterval(stepAisDemo, 1000);
+  stepAisDemo();
+  log(`AIS demo started: ${aisDemoVessels.length} simulated targets around the boat. They are not real vessels.`);
+}
+
+function stepAisDemo() {
+  const centre = lastFix || aisDemoCentre || DEFAULT_FIX;
+  for (const v of aisDemoVessels) {
+    if (!v.aton) {
+      // Dead reckoning at 1 s steps; turning back after 6 NM keeps them in view.
+      if (v.turn) { v.cog = (v.cog + v.turn + 360) % 360; v.heading = Math.round(v.cog); }
+      if (v.sog > 0 && Number.isFinite(v.cog)) {
+        const d = v.sog / 3600;
+        v.lat += d * Math.cos(v.cog * Math.PI / 180) / 60;
+        v.lon += d * Math.sin(v.cog * Math.PI / 180) / (60 * Math.cos(v.lat * Math.PI / 180));
+        const away = AISTargets.relative(centre, v);
+        if (away && away.rangeNm > 6) { v.cog = (v.cog + 180) % 360; v.heading = Math.round(v.cog); }
+      }
+    }
+    v.next -= 1;
+    if (v.next <= 0) {
+      v.next = v.every;
+      const sentences = v.aton ? AIS.encodeAton(v) : AIS.encodePosition({ ...v, second: new Date().getUTCSeconds() });
+      for (const s of sentences) parser.processLine(s, AIS_DEMO_SOURCE);
+    }
+    if (!v.aton) {
+      v.nextStatic -= 1;
+      if (v.nextStatic <= 0) {
+        v.nextStatic = 60;
+        for (const s of AIS.encodeStatic(v)) parser.processLine(s, AIS_DEMO_SOURCE);
+      }
+    }
+  }
+}
+
+function stopAisDemo(announce = true) {
+  if (aisDemoTimer) clearInterval(aisDemoTimer);
+  const wasRunning = Boolean(aisDemoTimer);
+  aisDemoTimer = null;
+  aisDemoVessels = [];
+  aisTargets.removeSource(AIS_DEMO_SOURCE);
+  renderAis();
+  if (announce && wasRunning) log('AIS demo stopped; the simulated targets were removed.');
 }
 
 function boatElement() {
@@ -722,6 +1034,7 @@ function initializeMap() {
       paint: { 'line-color': '#e63946', 'line-width': 3, 'line-opacity': 0.85 }
     });
     mapReady = true;
+    addAisLayers();
     addSeamarkInfoLayer();
     if (lastFix) updateMap(lastFix);
     if (lastFix && boatSeries && currentHour()) updateWindBarb(lastFix, currentHour());
@@ -926,6 +1239,7 @@ async function saveSetting(id) {
     log(`Depths shown in ${value === 'ft' ? 'feet' : 'metres'}.`);
     await GPSPlatform.send({ type: 'SETTINGS_CHANGED', id });
   }
+  if (id === 'aisEnabled' || id === 'aisVectorMinutes') renderAis();
   if (id === 'seamarkInfoEnabled') {
     if (map && map.getLayer('seamark-hit')) map.setLayoutProperty('seamark-hit', 'visibility', value ? 'visible' : 'none');
     if (!value) hideInfo(true);
@@ -1353,6 +1667,13 @@ async function initialize() {
     $(id).addEventListener('change', () => { requestFieldSeries().catch(() => {}); });
   }
   $('currentFieldEnabled').addEventListener('change', () => { updateCurrentArrow(lastFix, currentHour()); });
+  $('aisDemo').checked = false;
+  $('aisDemo').addEventListener('change', () => {
+    if ($('aisDemo').checked) startAisDemo();
+    else stopAisDemo();
+  });
+  // Ages targets (faded, then removed) and refreshes ranges and CPA even when no sentence arrives.
+  setInterval(renderAis, 5000);
   $('weatherModel').addEventListener('change', () => {
     if (lastFix) requestSeries(lastFix, true);
     requestFieldSeries().catch(() => {});

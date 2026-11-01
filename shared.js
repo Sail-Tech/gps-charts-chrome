@@ -18,6 +18,8 @@ const GPS_DEFAULTS = {
   bathymetryEnabled: true,
   bathymetryShading: true,
   seamarkInfoEnabled: true,
+  aisEnabled: true,
+  aisVectorMinutes: 6,
   depthUnits: 'm',
   weatherEnabled: true,
   weatherModel: 'best_match',
