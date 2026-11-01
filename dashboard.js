@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_FIX = { lat: 50.775, lon: -1.3 };
 const SETTING_IDS = [
   'connectionMode', 'provider', 'zoom', 'autoCenterProvider', 'updateSeconds', 'wsUrl', 'serialBaud',
-  'bathymetryEnabled', 'bathymetryShading', 'depthUnits',
+  'bathymetryEnabled', 'bathymetryShading', 'depthUnits', 'seamarkInfoEnabled',
   'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'currentFieldEnabled', 'tempUnits', 'waveUnits',
   'cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays', 'prefetchLevels'
 ];
@@ -57,6 +57,14 @@ let weatherRefreshTimer = null;
 let weatherAbort = null;
 let windMarker = null;
 let currentMarker = null;
+let infoPopup = null;
+let infoSticky = false;
+let infoTappedAt = 0;
+let seamarkChunks = null;          // chunk id -> { time, features }, mirrored in localStorage
+let seamarkQueue = [];
+let seamarkBusy = false;
+let seamarkRetryAt = 0;
+let seamarkBackoffMs = 0;
 let fieldMarkers = [];
 let fieldAbort = null;
 let fieldTimer = null;
@@ -73,6 +81,9 @@ const WX_MAX_ENTRIES = 600;
 // Versioned: entries saved before 0.8.0 have no ocean current.
 const WX_CACHE_KEY = 'gps-charts-weather-cache-v2';
 const WX_FIELD_KEY = 'gps-charts-field-series-v2';     // last field series, kept for offline reloads
+const SEAMARK_CACHE_KEY = 'gps-charts-seamarks-v1';
+const SEAMARK_FRESH_MS = 30 * 24 * 60 * 60 * 1000;   // seamarks rarely change; refetched after 30 days
+const SEAMARK_MAX_CHUNKS = 24;                        // about 1–2 MB of localStorage
 const WEATHER_REFRESH_MS = 3 * 60 * 60 * 1000;      // background refresh when online (forecasts update a few times a day)
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
@@ -340,23 +351,30 @@ function clearField() {
   fieldMarkers = [];
 }
 
-// Hover text for a field cell: mean wind, gusts and wave height. Shown because field cells are
-// interactive (see the .field-cell rule); the boat barb stays non-interactive over the hull.
-function fieldTitle(point) {
-  const bits = [];
-  if (point.windSpeed !== null && point.windSpeed !== undefined) {
-    const compass = Weather.degToCompass(point.windDir);
-    const gust = point.windGust !== null && point.windGust !== undefined ? `, gusts ${Math.round(point.windGust)} kn` : '';
-    bits.push(`Wind ${Math.round(point.windSpeed)} kn${gust}${compass ? ' from ' + compass : ''}`);
-  }
-  if (!Weather.isLand(point.elevation)) {
-    if (point.waveHeight !== null && point.waveHeight !== undefined) {
-      bits.push(`Waves ${point.waveHeight.toFixed(1)} m`);
-    }
-    const current = currentText(point);
-    if (current) bits.push(`Current ${current}`);
-  }
-  return bits.join(' · ');
+// Read-outs for one weather symbol, shown on hover or tap: { title, lines }.
+function windInfo(c) {
+  const compass = Weather.degToCompass(c.windDir);
+  const lines = [`${Math.round(c.windSpeed)} kn${compass ? ' from ' + compass : ''}`];
+  if (c.windGust !== null && c.windGust !== undefined) lines.push(`Gusts ${Math.round(c.windGust)} kn`);
+  return { title: 'Wind', lines };
+}
+
+function waveInfo(c) {
+  const unit = config.waveUnits === 'ft' ? 'ft' : 'm';
+  const height = unit === 'ft' ? c.waveHeight * 3.28084 : c.waveHeight;
+  const compass = Weather.degToCompass(c.waveDir);
+  const lines = [`${height.toFixed(1)} ${unit}${compass ? ' from ' + compass : ''}`];
+  if (c.wavePeriod) lines.push(`Period ${Math.round(c.wavePeriod)} s`);
+  return { title: 'Waves', lines };
+}
+
+function currentInfo(c) {
+  return { title: 'Current', lines: [currentText(c)] };
+}
+
+// Wraps a symbol's SVG so it carries its own read-out.
+function tipSymbol(svg, info) {
+  return `<span class="wx-symbol" data-info="${escapeHtml(JSON.stringify(info))}">${svg}</span>`;
 }
 
 function renderField(points) {
@@ -365,21 +383,21 @@ function renderField(points) {
   for (const point of points) {
     let html = '';
     if (config.windFieldEnabled && point.windSpeed !== null && point.windSpeed !== undefined) {
-      html += Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 56, width: 1.6 });
+      html += tipSymbol(Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 56, width: 1.6 }), windInfo(point));
     }
     // The marine model answers land points with its nearest sea cell: no waves or currents on land.
     const land = Weather.isLand(point.elevation);
     if (config.waveFieldEnabled && !land && point.waveHeight !== null && point.waveHeight !== undefined) {
-      html += Weather.waveArrowSvg(point.waveHeight, point.waveDir, { size: 34 });
+      html += tipSymbol(Weather.waveArrowSvg(point.waveHeight, point.waveDir, { size: 34 }), waveInfo(point));
     }
     if (config.currentFieldEnabled && !land && point.currentSpeed !== null && point.currentSpeed !== undefined) {
-      html += Weather.currentArrowSvg(point.currentSpeed, point.currentDir);
+      html += tipSymbol(Weather.currentArrowSvg(point.currentSpeed, point.currentDir), currentInfo(point));
     }
     if (!html) continue;
     const element = document.createElement('div');
     element.className = 'field-cell';
     element.innerHTML = html;
-    element.title = fieldTitle(point);
+    attachInfo(element, [point.lon, point.lat]);
     const marker = new maplibregl.Marker({ element, rotationAlignment: 'map' })
       .setLngLat([point.lon, point.lat])
       .addTo(map);
@@ -440,18 +458,15 @@ function updateCurrentArrow(fix, c) {
     if (currentMarker) { currentMarker.remove(); currentMarker = null; }
     return;
   }
-  const svg = Weather.currentArrowSvg(c.currentSpeed, c.currentDir, { scale: 1.5 });
-  const title = `Current ${currentText(c)}`;
+  const html = tipSymbol(Weather.currentArrowSvg(c.currentSpeed, c.currentDir, { scale: 1.5 }), currentInfo(c));
   if (currentMarker) {
     currentMarker.setLngLat([fix.lon, fix.lat]);
-    const element = currentMarker.getElement();
-    element.innerHTML = svg;
-    element.title = title;
+    currentMarker.getElement().innerHTML = html;
   } else {
     const element = document.createElement('div');
-    element.className = 'wind-barb';
-    element.innerHTML = svg;
-    element.title = title;
+    element.className = 'boat-symbol';
+    element.innerHTML = html;
+    attachInfo(element, () => currentMarker && currentMarker.getLngLat(), [0, 40]);
     currentMarker = new maplibregl.Marker({ element, rotationAlignment: 'map', offset: [0, 40] })
       .setLngLat([fix.lon, fix.lat])
       .addTo(map);
@@ -465,23 +480,173 @@ function updateWindBarb(fix, c) {
     if (windMarker) { windMarker.remove(); windMarker = null; }
     return;
   }
-  const svg = Weather.windBarbSvg(c.windSpeed, c.windDir);
-  const compass = Weather.degToCompass(c.windDir);
-  const title = `Wind ${Math.round(c.windSpeed)} kn${compass ? ' from ' + compass : ''}`;
+  const html = tipSymbol(Weather.windBarbSvg(c.windSpeed, c.windDir), windInfo(c));
   if (windMarker) {
     windMarker.setLngLat([fix.lon, fix.lat]);
-    const element = windMarker.getElement();
-    element.innerHTML = svg;
-    element.title = title;
+    windMarker.getElement().innerHTML = html;
   } else {
     const element = document.createElement('div');
-    element.className = 'wind-barb';
-    element.innerHTML = svg;
-    element.title = title;
+    element.className = 'boat-symbol';
+    element.innerHTML = html;
+    attachInfo(element, () => windMarker && windMarker.getLngLat(), [0, -34]);
     windMarker = new maplibregl.Marker({ element, rotationAlignment: 'map', offset: [0, -34] })
       .setLngLat([fix.lon, fix.lat])
       .addTo(map);
   }
+}
+
+/* ---------- Hover and tap read-out (weather symbols, lights and marks) ---------- */
+
+function escapeHtml(text) {
+  return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function infoHtml(info) {
+  const lines = (info.lines || []).filter(Boolean).map(line => `<div>${escapeHtml(line)}</div>`).join('');
+  const note = info.note ? `<div class="info-note">${escapeHtml(info.note)}</div>` : '';
+  return `<strong>${escapeHtml(info.title || '')}</strong>${lines}${note}`;
+}
+
+// Shows the read-out at a position. A hover read-out follows the pointer and goes on leave; a tapped
+// (sticky) one stays until the next tap elsewhere, so it also works with a finger.
+function showInfo(lngLat, info, sticky, offset = [0, 0]) {
+  if (!map || !lngLat) return;
+  if (!sticky && infoSticky) return;
+  infoSticky = sticky;
+  if (!infoPopup) {
+    infoPopup = new maplibregl.Popup({ closeButton: false, closeOnClick: false, maxWidth: '280px', className: 'info-popup' });
+  }
+  infoPopup.setOffset([offset[0], offset[1] - 14]).setLngLat(lngLat).setHTML(infoHtml(info)).addTo(map);
+}
+
+function hideInfo(force = false) {
+  if (!infoPopup || (infoSticky && !force)) return;
+  infoPopup.remove();
+  infoSticky = false;
+}
+
+// Weather symbols inside a marker element carry their read-out in data-info.
+function attachInfo(element, lngLat, offset) {
+  const where = () => (typeof lngLat === 'function' ? lngLat() : lngLat);
+  const infoOf = event => {
+    const symbol = event.target.closest && event.target.closest('[data-info]');
+    if (!symbol || !element.contains(symbol)) return null;
+    try { return JSON.parse(symbol.dataset.info); } catch (_) { return null; }
+  };
+  element.addEventListener('pointerover', event => {
+    if (event.pointerType !== 'mouse') return;
+    const info = infoOf(event);
+    if (info) showInfo(where(), info, false, offset);
+  });
+  element.addEventListener('pointerleave', () => hideInfo());
+  element.addEventListener('click', event => {
+    const info = infoOf(event);
+    if (!info) return;
+    infoTappedAt = Date.now();
+    showInfo(where(), info, true, offset);
+  });
+}
+
+/* ---------- Light and mark details (OpenStreetMap seamark data via Overpass) ---------- */
+
+function seamarkStore() {
+  if (!seamarkChunks) {
+    try { seamarkChunks = JSON.parse(localStorage.getItem(SEAMARK_CACHE_KEY) || '{}') || {}; } catch (_) { seamarkChunks = {}; }
+  }
+  return seamarkChunks;
+}
+
+function saveSeamarkStore() {
+  const store = seamarkStore();
+  const ids = Object.keys(store).sort((a, b) => store[b].time - store[a].time);
+  for (const id of ids.slice(SEAMARK_MAX_CHUNKS)) delete store[id];
+  try { localStorage.setItem(SEAMARK_CACHE_KEY, JSON.stringify(store)); } catch (_) {}
+}
+
+function updateSeamarkSource() {
+  if (!mapReady || !map.getSource('seamark-info')) return;
+  const store = seamarkStore();
+  const features = [];
+  for (const chunk of Object.values(store)) {
+    for (const f of chunk.features || []) {
+      features.push({ type: 'Feature', id: f.id, geometry: { type: 'Point', coordinates: [f.lon, f.lat] }, properties: { tags: JSON.stringify(f.tags) } });
+    }
+  }
+  map.getSource('seamark-info').setData({ type: 'FeatureCollection', features });
+}
+
+// Queues the chunks of the visible area that are missing or older than 30 days, then fetches them one
+// at a time; Overpass is a shared service that refuses bursts, so failures back off up to 30 minutes.
+function requestSeamarkInfo() {
+  if (!mapReady || !config.seamarkInfoEnabled || map.getZoom() < Seamarks.MIN_ZOOM) return;
+  const b = map.getBounds();
+  const store = seamarkStore();
+  const now = Date.now();
+  for (const chunk of Seamarks.chunksFor({ west: b.getWest(), south: b.getSouth(), east: b.getEast(), north: b.getNorth() })) {
+    const cached = store[chunk.id];
+    if (cached && now - cached.time < SEAMARK_FRESH_MS) continue;
+    if (!seamarkQueue.some(c => c.id === chunk.id)) seamarkQueue.push(chunk);
+  }
+  pumpSeamarks();
+}
+
+async function pumpSeamarks() {
+  if (seamarkBusy || !seamarkQueue.length) return;
+  if (Date.now() < seamarkRetryAt) {
+    setTimeout(pumpSeamarks, seamarkRetryAt - Date.now() + 50);
+    return;
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  seamarkBusy = true;
+  const chunk = seamarkQueue.shift();
+  try {
+    const features = await Seamarks.fetchChunk(chunk.x, chunk.y);
+    seamarkStore()[chunk.id] = { time: Date.now(), features };
+    saveSeamarkStore();
+    updateSeamarkSource();
+    seamarkBackoffMs = 0;
+  } catch (_) {
+    // Busy or offline: try this chunk again later (cached details, if any, stay shown).
+    seamarkQueue.unshift(chunk);
+    seamarkBackoffMs = Math.min(seamarkBackoffMs ? seamarkBackoffMs * 2 : 30000, 30 * 60 * 1000);
+    seamarkRetryAt = Date.now() + seamarkBackoffMs;
+  } finally {
+    seamarkBusy = false;
+  }
+  pumpSeamarks();
+}
+
+function seamarkInfo(feature) {
+  let tags = {};
+  try { tags = JSON.parse(feature.properties.tags); } catch (_) {}
+  return { ...Seamarks.describe(tags), note: 'OpenSeaMap / OpenStreetMap · not for navigation' };
+}
+
+function addSeamarkInfoLayer() {
+  map.addSource('seamark-info', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  // An invisible hit area around each mark; the symbols themselves are in the OpenSeaMap picture.
+  map.addLayer({
+    id: 'seamark-hit', type: 'circle', source: 'seamark-info', minzoom: Seamarks.MIN_ZOOM,
+    layout: { visibility: config.seamarkInfoEnabled ? 'visible' : 'none' },
+    paint: { 'circle-radius': 14, 'circle-color': '#000000', 'circle-opacity': 0 }
+  });
+  map.on('mousemove', 'seamark-hit', event => {
+    map.getCanvas().style.cursor = 'pointer';
+    const feature = event.features && event.features[0];
+    if (feature) showInfo(feature.geometry.coordinates, seamarkInfo(feature), false);
+  });
+  map.on('mouseleave', 'seamark-hit', () => {
+    map.getCanvas().style.cursor = '';
+    hideInfo();
+  });
+  map.on('click', event => {
+    if (Date.now() - infoTappedAt < 400) return;   // a weather symbol was just tapped
+    const hits = map.getLayer('seamark-hit') ? map.queryRenderedFeatures(event.point, { layers: ['seamark-hit'] }) : [];
+    if (hits.length) showInfo(hits[0].geometry.coordinates, seamarkInfo(hits[0]), true);
+    else hideInfo(true);
+  });
+  updateSeamarkSource();
+  requestSeamarkInfo();
 }
 
 function boatElement() {
@@ -502,6 +667,8 @@ function initializeMap() {
     boatMarker = null;
     windMarker = null;
     currentMarker = null;
+    infoPopup = null;
+    infoSticky = false;
     mapReady = false;
   }
   const wrap = TileCache.wrap;
@@ -555,6 +722,7 @@ function initializeMap() {
       paint: { 'line-color': '#e63946', 'line-width': 3, 'line-opacity': 0.85 }
     });
     mapReady = true;
+    addSeamarkInfoLayer();
     if (lastFix) updateMap(lastFix);
     if (lastFix && boatSeries && currentHour()) updateWindBarb(lastFix, currentHour());
     requestFieldSeries();
@@ -573,6 +741,7 @@ function initializeMap() {
   });
   map.on('dragstart', () => { $('followBoat').checked = false; });
   map.on('moveend', scheduleField);
+  map.on('moveend', requestSeamarkInfo);
 }
 
 // The follow zoom is not limited by the chart's max zoom: MapLibre enlarges the deepest tiles beyond it.
@@ -756,6 +925,11 @@ async function saveSetting(id) {
     GPSBathymetry.applyUnits(map, config);
     log(`Depths shown in ${value === 'ft' ? 'feet' : 'metres'}.`);
     await GPSPlatform.send({ type: 'SETTINGS_CHANGED', id });
+  }
+  if (id === 'seamarkInfoEnabled') {
+    if (map && map.getLayer('seamark-hit')) map.setLayoutProperty('seamark-hit', 'visibility', value ? 'visible' : 'none');
+    if (!value) hideInfo(true);
+    requestSeamarkInfo();
   }
   if (['bathymetryEnabled', 'bathymetryShading'].includes(id)) {
     GPSBathymetry.applyVisibility(map, config);

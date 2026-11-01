@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- **Read-outs on hover or tap:** every chart symbol now explains itself. A wind barb gives the wind speed, direction and gusts; a wave arrow the height, direction and period; a current arrow the speed and the direction it flows to. It works with a mouse (hover) and a finger (tap; the read-out stays until you tap elsewhere), and replaces the old "?" cursor and the single combined tooltip per field point.
+- **Light and mark details:** from zoom 11, hovering over or tapping a light, buoy, beacon, wreck, rock, harbour or other mark shows its name, kind, colour and shape, its light(s) in chart notation (for example *Fl(2) G 5s 8m 3M*, with sector bearings), topmark, fog signal and List of Lights number. The data is OpenStreetMap's seamark tagging (the same data the OpenSeaMap layer draws), read from the Overpass API one map tile at a time and kept for 30 days, so it also works offline. Option **Show light and mark details on hover or tap** under **Dashboard chart**.
+
 ## 0.8.0
 
 - **Ocean current:** a red current arrow at the boat and, optionally, across the chart, as in the OpenCPN Online Charts plugin. It points the way the water flows and grows with the speed up to 3 kn. The Conditions panel shows the current at the boat (for example *2.2 kn to ESE*), and the forecast timeline animates it over the next 72 hours. Data from Open-Meteo's marine model (`ocean_current_velocity`, `ocean_current_direction`), which includes tides.

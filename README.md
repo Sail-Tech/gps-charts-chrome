@@ -8,7 +8,7 @@ The same dashboard also runs as a **web app for iPhone and Android** at **<https
 
 ## Summary
 
-- **Dashboard chart** with a boat marker oriented to its course, auto-follow and a track. Base chart: Esri World Ocean Base (default), OpenStreetMap or any XYZ source. On top: OpenSeaMap seamarks plus Open Waters depth contours, soundings and depth colours, in **metres or feet**.
+- **Dashboard chart** with a boat marker oriented to its course, auto-follow and a track. Base chart: Esri World Ocean Base (default), OpenStreetMap or any XYZ source. On top: OpenSeaMap seamarks plus Open Waters depth contours, soundings and depth colours, in **metres or feet**. Hover over or tap a light, buoy, beacon or other mark for its details, and a wind, wave or current symbol for its values.
 - **Offline cache**: chart tiles you view are stored and shown again when the internet connection drops. You can also save an area before leaving harbour.
 - **Serial ports**: a list of authorised ports with USB adapter names, and **Scan ports**, which finds the port and baud rate that send NMEA.
 - **i-Boating**: the boat appears as i-Boating's own marker with a heading line and moves without reloading the page, keeping your zoom.
@@ -271,6 +271,17 @@ Esri World Ocean Base tiles are cached as you view them but are not bulk-downloa
 
 The cache covers only the extension's dashboard. The C-MAP, i-Boating and Garmin websites need an internet connection.
 
+### Light and mark details, and symbol read-outs
+
+Hover over (or tap, on a phone or tablet) any symbol on the chart for a small read-out:
+
+- **Wind barb:** speed and the direction it comes from, and the gusts.
+- **Wave arrow:** height (in the wave-height units) and the direction the waves come from, and the period.
+- **Current arrow:** speed in knots and the direction it flows to.
+- **Lights, buoys, beacons and other marks** (from zoom 11): name, kind and category, colour and shape, every light in chart notation (for example *Fl(2) G 5s 8m 3M*, and each sector with its bearings), topmark, fog signal, water level and List of Lights number.
+
+A tapped read-out stays open until you tap somewhere else. The OpenSeaMap seamark layer is a picture, so the mark details come from the same OpenStreetMap data (`seamark:*` tags), read from the public [Overpass API](https://overpass-api.de) for the visible area, one tile of about 35 × 25 km at a time. Each tile is kept in the browser for 30 days (up to 24 tiles), so the details also work offline where you have been. Overpass is a shared service that is sometimes busy: the first details of a new area can take up to a minute, and failed requests are retried later, waiting up to 30 minutes. Switch the details off with **Show light and mark details on hover or tap** under **Dashboard chart**. OpenStreetMap data is © OpenStreetMap contributors (ODbL) and is not for navigation: check lights and marks against official charts and the List of Lights.
+
 ### Weather forecast
 
 The dashboard overlays a live marine forecast from [Open-Meteo](https://open-meteo.com) (no API key). The **Conditions** panel shows wind, gusts, air temperature, pressure, wave height and the ocean (tidal) **current** at the boat; a maritime **wind barb** (in knots) is drawn at the vessel; and an optional **wind field**, **wave arrows** and red **current arrows** cover the whole chart, re-fetched as you pan. Choose the forecast **model** (best match, ECMWF IFS, GFS, ICON, Météo-France or UK Met Office) and the air-temperature (°C/°F) and wave-height (m/ft) units.
@@ -342,6 +353,7 @@ After the page loads, the extension makes **one** attempt to click the map centr
 - Opening UDP or TCP on `0.0.0.0` accepts data from devices on the network; apply suitable firewall rules.
 - The `scripting` permission is used only in the provider tab opened by the extension: on `appchart.c-map.com` to change its route, on i-Boating to send its boat-position message, and on `maps.garmin.com` for the single marker attempt and native-marker check.
 - External pages are subject to the providers' accounts, licences, cookies and terms.
+- Light and mark details are requested from the Overpass API with the bounds of a map tile around the visible area, not the boat's exact position. Switching the details off stops these requests.
 
 ## Structure
 
@@ -360,6 +372,7 @@ bathymetry.js                 Open bathymetry sources and layers
 popup.html/css/js             Extension popup
 nmea.js                       NMEA 0183, JSON and Signal K parser
 weather.js                    Open-Meteo forecast, wind barbs, wave and current arrows, field and timeline
+seamarks.js                   Light and mark details from OpenStreetMap (Overpass): tiles, chart-notation lights, descriptions
 bridge/gps_bridge.py          TCP/UDP to WebSocket bridge
 bridge/requirements.txt       Python dependency
 vendor/                       MapLibre GL JS 5.24.0 and its licence
@@ -367,6 +380,7 @@ icons/                        Extension and web app icons (icon.svg is the sourc
 tests/nmea.test.js            Parser tests
 tests/tilecache.test.js       Cache maths, prefetch planning and serial helper tests
 tests/weather.test.js         Weather module tests
+tests/seamarks.test.js        Light and mark detail tests
 tests/provider.test.js        Provider URLs and 12-character Garmin geohash tests
 ```
 

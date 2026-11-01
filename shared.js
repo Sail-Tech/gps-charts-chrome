@@ -17,6 +17,7 @@ const GPS_DEFAULTS = {
   tileMaxZoom: 10,
   bathymetryEnabled: true,
   bathymetryShading: true,
+  seamarkInfoEnabled: true,
   depthUnits: 'm',
   weatherEnabled: true,
   weatherModel: 'best_match',

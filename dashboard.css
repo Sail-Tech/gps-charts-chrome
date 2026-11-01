@@ -2,10 +2,18 @@
 @media(max-width:700px){body{height:100dvh;overflow:hidden}.topbar{height:calc(56px + env(safe-area-inset-top));padding:env(safe-area-inset-top) max(12px,env(safe-area-inset-right)) 0 max(12px,env(safe-area-inset-left))}.brand{gap:9px}.brand img{width:28px;height:28px}.brand strong{font-size:16px}.connection-pill{padding:6px 10px;font-size:11px}.brand strong{white-space:nowrap}.connection-pill span:last-child{max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.layout{display:block;position:relative;height:calc(100dvh - 56px - env(safe-area-inset-top))}.sidebar{position:absolute;top:0;left:0;bottom:0;z-index:10;width:min(360px,88vw);padding:4px 16px calc(24px + env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));box-shadow:4px 0 18px #0005}.map-area{position:absolute;inset:0}.map-footer{left:max(10px,env(safe-area-inset-left));right:max(10px,env(safe-area-inset-right));bottom:calc(9px + env(safe-area-inset-bottom))}.map-notice{white-space:normal;width:max-content;max-width:86vw;text-align:center}input[type=text],input[type=number],select{font-size:16px}}
 
 /* Wind barb overlay on the chart. Non-interactive so it never blocks map panning. */
-.wind-barb { pointer-events: none; }
-.wind-barb svg { display: block; filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.9)); }
-.field-cell { pointer-events: auto; cursor: help; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.boat-symbol svg { display: block; filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.9)); }
+.boat-symbol { pointer-events: none; }
+.field-cell { pointer-events: none; display: flex; flex-direction: column; align-items: center; gap: 1px; }
 .field-cell svg { display: block; filter: drop-shadow(0 1px 1px rgba(255, 255, 255, 0.85)); }
+/* Only the drawn symbols take the pointer, so the chart stays draggable between them. */
+.wx-symbol { display: block; pointer-events: auto; cursor: pointer; }
+
+/* Hover / tap read-out for weather symbols, lights and marks. */
+.info-popup .maplibregl-popup-content { padding: 8px 11px; border-radius: 10px; background: rgba(10, 38, 56, 0.92); color: #fff; font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3); }
+.info-popup .maplibregl-popup-content strong { display: block; font-size: 13px; margin-bottom: 2px; }
+.info-popup .maplibregl-popup-tip { border-top-color: rgba(10, 38, 56, 0.92); border-bottom-color: rgba(10, 38, 56, 0.92); }
+.info-popup .info-note { margin-top: 4px; color: #a9c7d6; font-size: 10px; }
 
 /* Forecast timeline: a translucent bar over the chart with a play button and a styled time slider. */
 .timeline { position: absolute; left: 50%; transform: translateX(-50%); bottom: 42px; z-index: 6; display: flex; align-items: center; gap: 12px; width: min(640px, calc(100% - 32px)); padding: 10px 14px; background: rgba(10, 38, 56, 0.82); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 14px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); color: #fff; pointer-events: auto; }
