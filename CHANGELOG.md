@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+- **Ocean current:** a red current arrow at the boat and, optionally, across the chart, as in the OpenCPN Online Charts plugin. It points the way the water flows and grows with the speed up to 3 kn. The Conditions panel shows the current at the boat (for example *2.2 kn to ESE*), and the forecast timeline animates it over the next 72 hours. Data from Open-Meteo's marine model (`ocean_current_velocity`, `ocean_current_direction`), which includes tides.
+- **No waves or currents on land:** the marine model answers land points with its nearest sea cell, so field points whose terrain is above 2 m no longer get wave or current arrows.
+- The weather caches start afresh, because readings saved by earlier versions have no current.
+
 ## 0.7.1
 
 - **Garmin marker for the OpenCPN plugin:** a Garmin Marine tab opened in Chrome by another program with `gpscharts=pin` in its address (the OpenCPN Online Charts plugin's **Open provider → Open Garmin Marine**) now gets the same single marker attempt and 500 m check as a tab opened from the dashboard. Each tab is tried once; only Garmin Marine pages with a geohash `key` qualify.

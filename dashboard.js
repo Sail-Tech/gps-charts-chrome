@@ -5,7 +5,7 @@ const DEFAULT_FIX = { lat: 50.775, lon: -1.3 };
 const SETTING_IDS = [
   'connectionMode', 'provider', 'zoom', 'autoCenterProvider', 'updateSeconds', 'wsUrl', 'serialBaud',
   'bathymetryEnabled', 'bathymetryShading', 'depthUnits',
-  'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'tempUnits', 'waveUnits',
+  'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'currentFieldEnabled', 'tempUnits', 'waveUnits',
   'cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays', 'prefetchLevels'
 ];
 const CACHE_IDS = ['cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays'];
@@ -56,6 +56,7 @@ let playTimer = null;
 let weatherRefreshTimer = null;
 let weatherAbort = null;
 let windMarker = null;
+let currentMarker = null;
 let fieldMarkers = [];
 let fieldAbort = null;
 let fieldTimer = null;
@@ -63,14 +64,15 @@ let wxStore = null;
 const WEATHER_MIN_MOVE_M = 2000;
 const WEATHER_MAX_AGE_MS = 10 * 60 * 1000;
 const FORECAST_WINDOW_H = 72;   // hours of forecast the timeline scrubs through
-const WEATHER_IDS = ['windReadout', 'gustReadout', 'airTempReadout', 'pressureReadout', 'waveReadout'];
+const WEATHER_IDS = ['windReadout', 'gustReadout', 'airTempReadout', 'pressureReadout', 'waveReadout', 'currentReadout'];
 // Persistent weather cache: fresh for an hour (reused without a request), then kept up to 72 hours as
 // an offline fallback shown with its age. Stored per viewer in localStorage.
 const WX_FRESH_MS = 60 * 60 * 1000;
 const WX_MAX_AGE_MS = 72 * 60 * 60 * 1000;
 const WX_MAX_ENTRIES = 600;
-const WX_CACHE_KEY = 'gps-charts-weather-cache';
-const WX_FIELD_KEY = 'gps-charts-field-series';     // last field series, kept for offline reloads
+// Versioned: entries saved before 0.8.0 have no ocean current.
+const WX_CACHE_KEY = 'gps-charts-weather-cache-v2';
+const WX_FIELD_KEY = 'gps-charts-field-series-v2';     // last field series, kept for offline reloads
 const WEATHER_REFRESH_MS = 3 * 60 * 60 * 1000;      // background refresh when online (forecasts update a few times a day)
 
 const parser = new GPSParser.Parser(receiveFix, (message, raw) => {
@@ -132,6 +134,8 @@ function clearConditions(note) {
 }
 
 function wxLoad() {
+  // Drop the caches of versions without ocean currents.
+  try { localStorage.removeItem('gps-charts-weather-cache'); localStorage.removeItem('gps-charts-field-series'); } catch (_) {}
   try { return JSON.parse(localStorage.getItem(WX_CACHE_KEY) || '{}'); } catch (_) { return {}; }
 }
 
@@ -223,13 +227,13 @@ function renderSelectedHour() {
 }
 
 function renderFieldAtHour() {
-  if (!fieldSeries || (!config.windFieldEnabled && !config.waveFieldEnabled)) {
+  if (!fieldSeries || !anyFieldEnabled()) {
     clearField();
     return;
   }
   const last = fieldSeries.points[0] ? fieldSeries.points[0].hours.length - 1 : 0;
   const h = Math.min(selectedHour, last);
-  renderField(fieldSeries.points.map(p => ({ lat: p.lat, lon: p.lon, ...(p.hours[h] || {}) })));
+  renderField(fieldSeries.points.map(p => ({ lat: p.lat, lon: p.lon, elevation: p.elevation, ...(p.hours[h] || {}) })));
 }
 
 /* ---------- Forecast timeline ---------- */
@@ -304,6 +308,7 @@ function updateConditions(c, info = {}) {
   $('waveReadout').textContent = waveHeight === null
     ? '—'
     : `${formatNumber(waveHeight, 1, ' ' + waveUnit)}${c.wavePeriod ? ' · ' + formatNumber(c.wavePeriod, 0, ' s') : ''}`;
+  $('currentReadout').textContent = currentText(c) || '—';
   const modelName = $('weatherModel').selectedOptions[0] ? $('weatherModel').selectedOptions[0].textContent : '';
   const modelTag = config.weatherModel && config.weatherModel !== 'best_match' ? ` (${modelName})` : '';
   // A cached reading older than the fresh window is labelled with its age so stale data is never
@@ -314,9 +319,21 @@ function updateConditions(c, info = {}) {
     : new Date(c.time).toLocaleTimeString(LOCALE);
   $('condMeta').textContent = `${c.source}${modelTag} forecast · ${stamp}${offline ? ' · offline' : ''}`;
   updateWindBarb(lastFix, c);
+  updateCurrentArrow(lastFix, c);
 }
 
-/* ---------- Wind/wave field across the visible chart ---------- */
+// "0.8 kn to NE": Open-Meteo gives the direction the current flows towards.
+function currentText(c) {
+  if (c.currentSpeed === null || c.currentSpeed === undefined) return '';
+  const compass = Weather.degToCompass(c.currentDir);
+  return `${formatNumber(c.currentSpeed, 1, ' kn')}${compass ? ' to ' + compass : ''}`;
+}
+
+function anyFieldEnabled() {
+  return config.windFieldEnabled || config.waveFieldEnabled || config.currentFieldEnabled;
+}
+
+/* ---------- Wind/wave/current field across the visible chart ---------- */
 
 function clearField() {
   for (const marker of fieldMarkers) marker.remove();
@@ -332,8 +349,12 @@ function fieldTitle(point) {
     const gust = point.windGust !== null && point.windGust !== undefined ? `, gusts ${Math.round(point.windGust)} kn` : '';
     bits.push(`Wind ${Math.round(point.windSpeed)} kn${gust}${compass ? ' from ' + compass : ''}`);
   }
-  if (point.waveHeight !== null && point.waveHeight !== undefined) {
-    bits.push(`Waves ${point.waveHeight.toFixed(1)} m`);
+  if (!Weather.isLand(point.elevation)) {
+    if (point.waveHeight !== null && point.waveHeight !== undefined) {
+      bits.push(`Waves ${point.waveHeight.toFixed(1)} m`);
+    }
+    const current = currentText(point);
+    if (current) bits.push(`Current ${current}`);
   }
   return bits.join(' · ');
 }
@@ -346,8 +367,13 @@ function renderField(points) {
     if (config.windFieldEnabled && point.windSpeed !== null && point.windSpeed !== undefined) {
       html += Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 56, width: 1.6 });
     }
-    if (config.waveFieldEnabled && point.waveHeight !== null && point.waveHeight !== undefined) {
+    // The marine model answers land points with its nearest sea cell: no waves or currents on land.
+    const land = Weather.isLand(point.elevation);
+    if (config.waveFieldEnabled && !land && point.waveHeight !== null && point.waveHeight !== undefined) {
       html += Weather.waveArrowSvg(point.waveHeight, point.waveDir, { size: 34 });
+    }
+    if (config.currentFieldEnabled && !land && point.currentSpeed !== null && point.currentSpeed !== undefined) {
+      html += Weather.currentArrowSvg(point.currentSpeed, point.currentDir);
     }
     if (!html) continue;
     const element = document.createElement('div');
@@ -363,7 +389,7 @@ function renderField(points) {
 
 // Fetches the 72 h hourly field for the visible grid (kept in memory), then draws the selected hour.
 async function requestFieldSeries() {
-  if (!mapReady || (!config.windFieldEnabled && !config.waveFieldEnabled)) {
+  if (!mapReady || !anyFieldEnabled()) {
     fieldSeries = null;
     clearField();
     return;
@@ -381,27 +407,55 @@ async function requestFieldSeries() {
     const raw = await Weather.fetchFieldSeries(points, {
       wind: config.windFieldEnabled,
       wave: config.waveFieldEnabled,
+      current: config.currentFieldEnabled,
       model: config.weatherModel,
       signal: fieldAbort.signal
     });
     const start = Weather.nowIndex(raw.times, Date.now());
     fieldSeries = {
       times: raw.times.slice(start, start + FORECAST_WINDOW_H + 1),
-      points: raw.points.map(p => ({ lat: p.lat, lon: p.lon, hours: p.hours.slice(start, start + FORECAST_WINDOW_H + 1) }))
+      points: raw.points.map(p => ({ lat: p.lat, lon: p.lon, elevation: p.elevation, hours: p.hours.slice(start, start + FORECAST_WINDOW_H + 1) }))
     };
     if (fieldSeries.points[0] && fieldSeries.points[0].hours.length) saveFieldSeries(fieldSeries, config.weatherModel);
     renderFieldAtHour();
   } catch (error) {
     // Offline or the API failed: keep whatever field is already shown (in memory or just restored).
-    if (error.name !== 'AbortError') log('Wind/wave field unavailable — showing the last cached field.');
+    if (error.name !== 'AbortError') log('Weather field unavailable — showing the last cached field.');
   }
 }
 
 // Debounced: panning or zooming moves the visible area, so the field is re-fetched for the new bounds.
 function scheduleField() {
-  if (!config.windFieldEnabled && !config.waveFieldEnabled) return;
+  if (!anyFieldEnabled()) return;
   clearTimeout(fieldTimer);
   fieldTimer = setTimeout(requestFieldSeries, 500);
+}
+
+// The red current arrow at the boat, larger than the field's, just below the hull (the wind barb sits
+// above it). Shown with the current arrows across the chart.
+function updateCurrentArrow(fix, c) {
+  const show = mapReady && config.weatherEnabled && config.currentFieldEnabled && fix && c &&
+    c.currentSpeed !== null && c.currentSpeed !== undefined;
+  if (!show) {
+    if (currentMarker) { currentMarker.remove(); currentMarker = null; }
+    return;
+  }
+  const svg = Weather.currentArrowSvg(c.currentSpeed, c.currentDir, { scale: 1.5 });
+  const title = `Current ${currentText(c)}`;
+  if (currentMarker) {
+    currentMarker.setLngLat([fix.lon, fix.lat]);
+    const element = currentMarker.getElement();
+    element.innerHTML = svg;
+    element.title = title;
+  } else {
+    const element = document.createElement('div');
+    element.className = 'wind-barb';
+    element.innerHTML = svg;
+    element.title = title;
+    currentMarker = new maplibregl.Marker({ element, rotationAlignment: 'map', offset: [0, 40] })
+      .setLngLat([fix.lon, fix.lat])
+      .addTo(map);
+  }
 }
 
 // Draws the maritime wind barb at the boat, as a non-interactive map marker offset above the hull.
@@ -447,6 +501,7 @@ function initializeMap() {
     map = null;
     boatMarker = null;
     windMarker = null;
+    currentMarker = null;
     mapReady = false;
   }
   const wrap = TileCache.wrap;
@@ -1114,14 +1169,16 @@ async function initialize() {
       $('timeline').classList.add('hidden');
       clearConditions('Forecast off.');
       updateWindBarb(lastFix, null);
+      updateCurrentArrow(lastFix, null);
     }
   });
   $('windBarbEnabled').addEventListener('change', () => {
     updateWindBarb(lastFix, currentHour());
   });
-  for (const id of ['windFieldEnabled', 'waveFieldEnabled']) {
+  for (const id of ['windFieldEnabled', 'waveFieldEnabled', 'currentFieldEnabled']) {
     $(id).addEventListener('change', () => { requestFieldSeries().catch(() => {}); });
   }
+  $('currentFieldEnabled').addEventListener('change', () => { updateCurrentArrow(lastFix, currentHour()); });
   $('weatherModel').addEventListener('change', () => {
     if (lastFix) requestSeries(lastFix, true);
     requestFieldSeries().catch(() => {});

@@ -23,6 +23,7 @@ const GPS_DEFAULTS = {
   windBarbEnabled: true,
   windFieldEnabled: false,
   waveFieldEnabled: false,
+  currentFieldEnabled: false,
   tempUnits: 'C',
   waveUnits: 'm',
   attribution: 'Esri, Garmin, GEBCO, NOAA NGDC, and other contributors · Not for navigation',

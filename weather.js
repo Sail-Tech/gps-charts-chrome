@@ -1,5 +1,5 @@
-/* Marine conditions from Open-Meteo (no API key, CORS-enabled): wind, air temperature, pressure and
-   waves at the boat position. The forecast and marine endpoints are queried together; either may fail
+/* Marine conditions from Open-Meteo (no API key, CORS-enabled): wind, air temperature, pressure,
+   waves and the ocean (tidal) current at the boat position. The forecast and marine endpoints are queried together; either may fail
    on its own (the marine model has no data for inland lakes), so whatever answers is shown. */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -10,6 +10,12 @@
   const FORECAST_ORIGIN = 'https://api.open-meteo.com';
   const MARINE_ORIGIN = 'https://marine-api.open-meteo.com';
   const TIMEOUT_MS = 8000;
+  const KMH_PER_KN = 1.852;
+  // The marine model answers a land point with its nearest sea cell, so waves and currents are left out
+  // where the terrain (the `elevation` Open-Meteo returns for each point) is higher than this.
+  const LAND_ELEVATION_M = 2;
+  const MARINE_VARS = 'wave_height,wave_direction,wave_period,ocean_current_velocity,ocean_current_direction';
+  const FIELD_MARINE_VARS = 'wave_height,wave_direction,ocean_current_velocity,ocean_current_direction';
   const COMPASS = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
     'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW'];
 
@@ -30,6 +36,17 @@
     if (number(deg) === null) return null;
     const index = Math.round((((deg % 360) + 360) % 360) / 22.5) % 16;
     return COMPASS[index];
+  }
+
+  // Open-Meteo gives the current in km/h; the panel and the arrows use knots.
+  function knotsFromKmh(value) {
+    const n = number(value);
+    return n === null ? null : n / KMH_PER_KN;
+  }
+
+  function isLand(elevation) {
+    const n = number(elevation);
+    return n !== null && n > LAND_ELEVATION_M;
   }
 
   function distanceMeters(aLat, aLon, bLat, bLon) {
@@ -58,7 +75,7 @@
     const params = new URLSearchParams({
       latitude: round(lat),
       longitude: round(lon),
-      current: 'wave_height,wave_direction,wave_period'
+      current: MARINE_VARS
     });
     return `${MARINE_ORIGIN}/v1/marine?${params}`;
   }
@@ -80,7 +97,9 @@
     return {
       waveHeight: number(current.wave_height),
       waveDir: number(current.wave_direction),
-      wavePeriod: number(current.wave_period)
+      wavePeriod: number(current.wave_period),
+      currentSpeed: knotsFromKmh(current.ocean_current_velocity),
+      currentDir: number(current.ocean_current_direction)
     };
   }
 
@@ -170,6 +189,30 @@
       `<path d="M ${(-head).toFixed(1)} ${(-half + head).toFixed(1)} L 0 ${(-half).toFixed(1)} L ${head.toFixed(1)} ${(-half + head).toFixed(1)}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"/>`
     ];
     return `${header}<g transform="translate(${cx},${cy}) rotate(${travel.toFixed(0)})">${parts.join('')}</g></svg>`;
+  }
+
+  // A red arrow for the ocean (tidal) current, as in the OpenCPN Online Charts plugin. Open-Meteo gives
+  // the direction the current flows towards, so the arrow points that way unrotated; it grows from 14 px
+  // with the speed, up to 3 kn.
+  function currentArrowSvg(speedKn, dirDeg, opts = {}) {
+    const scale = opts.scale || 1;
+    const speed = number(speedKn);
+    const length = (14 + Math.min(Math.max(speed || 0, 0), 3) / 3 * 32) * scale;
+    const head = 7 * scale;
+    const width = Math.max(1.5, 2.2 * scale);
+    const size = Math.ceil(46 * scale + 6);
+    const c = size / 2;
+    const header = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">`;
+    if (speed === null || number(dirDeg) === null) return `${header}</svg>`;
+    const dir = ((Number(dirDeg) % 360) + 360) % 360;
+    const f = v => v.toFixed(1);
+    const half = length / 2;
+    const shaft = `<line x1="0" y1="${f(half)}" x2="0" y2="${f(-half + head * 0.8)}" stroke-linecap="round"/>`;
+    const tip = `<polygon points="0,${f(-half)} ${f(-head * 0.6)},${f(-half + head * 1.3)} ${f(head * 0.6)},${f(-half + head * 1.3)}"/>`;
+    // A light outline under the red keeps the arrow readable over dark and red chart areas.
+    return `${header}<g transform="translate(${c},${c}) rotate(${dir.toFixed(0)})" stroke-linejoin="round">` +
+      `<g stroke="#ffffff" stroke-width="${f(width + 2)}" fill="#ffffff">${shaft}${tip}</g>` +
+      `<g stroke="#d62828" stroke-width="${f(width)}" fill="#d62828">${shaft}${tip}</g></g></svg>`;
   }
 
   // An evenly spaced grid of points across the visible bounds (inset off the edges), for a wind/wave
@@ -277,7 +320,7 @@
     const params = new URLSearchParams({
       latitude: points.map(p => round(p.lat)).join(','),
       longitude: points.map(p => round(p.lon)).join(','),
-      current: 'wave_height,wave_direction'
+      current: FIELD_MARINE_VARS
     });
     return `${MARINE_ORIGIN}/v1/marine?${params}`;
   }
@@ -286,7 +329,7 @@
   // for one point; normalise to an array aligned with the points.
   function asArray(json, length) {
     const list = Array.isArray(json) ? json : (json ? [json] : []);
-    return Array.from({ length }, (_, i) => (list[i] && list[i].current) || {});
+    return Array.from({ length }, (_, i) => ({ ...((list[i] && list[i].current) || {}), elevation: list[i] ? list[i].elevation : null }));
   }
 
   function parseFieldForecast(json, points) {
@@ -300,16 +343,19 @@
   function parseFieldMarine(json, points) {
     return asArray(json, points.length).map(c => ({
       waveHeight: number(c.wave_height),
-      waveDir: number(c.wave_direction)
+      waveDir: number(c.wave_direction),
+      currentSpeed: knotsFromKmh(c.ocean_current_velocity),
+      currentDir: number(c.ocean_current_direction),
+      elevation: number(c.elevation)
     }));
   }
 
   async function fetchField(points, options = {}) {
     const wantWind = options.wind !== false;
-    const wantWave = options.wave === true;
+    const wantMarine = options.wave === true || options.current === true;
     const [forecast, marine] = await Promise.allSettled([
       wantWind ? fetchJson(fieldForecastUrl(points, { model: options.model }), options.signal) : Promise.resolve(null),
-      wantWave ? fetchJson(fieldMarineUrl(points), options.signal) : Promise.resolve(null)
+      wantMarine ? fetchJson(fieldMarineUrl(points), options.signal) : Promise.resolve(null)
     ]);
     const wind = forecast.status === 'fulfilled' && forecast.value ? parseFieldForecast(forecast.value, points) : null;
     const wave = marine.status === 'fulfilled' && marine.value ? parseFieldMarine(marine.value, points) : null;
@@ -320,7 +366,10 @@
       windDir: wind ? wind[i].windDir : null,
       windGust: wind ? wind[i].windGust : null,
       waveHeight: wave ? wave[i].waveHeight : null,
-      waveDir: wave ? wave[i].waveDir : null
+      waveDir: wave ? wave[i].waveDir : null,
+      currentSpeed: wave ? wave[i].currentSpeed : null,
+      currentDir: wave ? wave[i].currentDir : null,
+      elevation: wave ? wave[i].elevation : null
     }));
   }
 
@@ -347,7 +396,7 @@
     const params = new URLSearchParams({
       latitude: round(lat),
       longitude: round(lon),
-      hourly: 'wave_height,wave_direction,wave_period',
+      hourly: MARINE_VARS,
       forecast_days: String(opts.days || 4)
     });
     return `${MARINE_ORIGIN}/v1/marine?${params}`;
@@ -369,7 +418,7 @@
     const params = new URLSearchParams({
       latitude: points.map(p => round(p.lat)).join(','),
       longitude: points.map(p => round(p.lon)).join(','),
-      hourly: 'wave_height,wave_direction',
+      hourly: FIELD_MARINE_VARS,
       forecast_days: String(opts.days || 4)
     });
     return `${MARINE_ORIGIN}/v1/marine?${params}`;
@@ -392,7 +441,9 @@
       pressure: at(f.surface_pressure, i),
       waveHeight: at(m.wave_height, i),
       waveDir: at(m.wave_direction, i),
-      wavePeriod: at(m.wave_period, i)
+      wavePeriod: at(m.wave_period, i),
+      currentSpeed: knotsFromKmh(at(m.ocean_current_velocity, i)),
+      currentDir: at(m.ocean_current_direction, i)
     }));
     return { times, hours };
   }
@@ -411,9 +462,12 @@
         windDir: at(fh.wind_direction_10m, i),
         windGust: at(fh.wind_gusts_10m, i),
         waveHeight: at(mh.wave_height, i),
-        waveDir: at(mh.wave_direction, i)
+        waveDir: at(mh.wave_direction, i),
+        currentSpeed: knotsFromKmh(at(mh.ocean_current_velocity, i)),
+        currentDir: at(mh.ocean_current_direction, i)
       }));
-      return { lat: p.lat, lon: p.lon, hours };
+      const elevation = mList[idx] ? number(mList[idx].elevation) : null;
+      return { lat: p.lat, lon: p.lon, elevation, hours };
     });
     return { times: times.map(t => `${t}Z`), points: series };
   }
@@ -447,7 +501,8 @@
   async function fetchFieldSeries(points, options = {}) {
     const [forecast, marine] = await Promise.allSettled([
       options.wind !== false ? fetchJson(fieldHourlyForecastUrl(points, { model: options.model, days: options.days }), options.signal) : Promise.resolve(null),
-      options.wave === true ? fetchJson(fieldHourlyMarineUrl(points, { days: options.days }), options.signal) : Promise.resolve(null)
+      options.wave === true || options.current === true
+        ? fetchJson(fieldHourlyMarineUrl(points, { days: options.days }), options.signal) : Promise.resolve(null)
     ]);
     const series = parseFieldSeries(
       forecast.status === 'fulfilled' ? forecast.value : null,
@@ -466,7 +521,7 @@
     hourlyForecastUrl, hourlyMarineUrl, fieldHourlyForecastUrl, fieldHourlyMarineUrl,
     parseSeries, parseFieldSeries, nowIndex, fetchSeries, fetchFieldSeries,
     degToCompass, distanceMeters, needsRefresh, fetchConditions, windBarbSvg,
-    waveArrowSvg, gridPoints, fieldForecastUrl, fieldMarineUrl, parseFieldForecast, parseFieldMarine, fetchField,
+    waveArrowSvg, currentArrowSvg, knotsFromKmh, isLand, gridPoints, fieldForecastUrl, fieldMarineUrl, parseFieldForecast, parseFieldMarine, fetchField,
     cacheKey, cacheGet, cachePut, formatAge
   };
 });

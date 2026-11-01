@@ -273,9 +273,11 @@ The cache covers only the extension's dashboard. The C-MAP, i-Boating and Garmin
 
 ### Weather forecast
 
-The dashboard overlays a live marine forecast from [Open-Meteo](https://open-meteo.com) (no API key). The **Conditions** panel shows wind, gusts, air temperature, pressure and wave height at the boat; a maritime **wind barb** (in knots) is drawn at the vessel; and an optional **wind field** and **wave arrows** cover the whole chart, re-fetched as you pan. Choose the forecast **model** (best match, ECMWF IFS, GFS, ICON, Météo-France or UK Met Office) and the air-temperature (°C/°F) and wave-height (m/ft) units.
+The dashboard overlays a live marine forecast from [Open-Meteo](https://open-meteo.com) (no API key). The **Conditions** panel shows wind, gusts, air temperature, pressure, wave height and the ocean (tidal) **current** at the boat; a maritime **wind barb** (in knots) is drawn at the vessel; and an optional **wind field**, **wave arrows** and red **current arrows** cover the whole chart, re-fetched as you pan. Choose the forecast **model** (best match, ECMWF IFS, GFS, ICON, Météo-France or UK Met Office) and the air-temperature (°C/°F) and wave-height (m/ft) units.
 
-A **forecast timeline** at the bottom of the chart scrubs the next 72 hours: drag it, or press play, to watch the wind and waves change across the map. Readings are cached for an hour and kept up to 72 hours as an offline fallback, shown with their age, so a stale forecast is never mistaken for the current one. This is not a substitute for an official marine forecast.
+A **forecast timeline** at the bottom of the chart scrubs the next 72 hours: drag it, or press play, to watch the wind, waves and tidal streams change across the map. Readings are cached for an hour and kept up to 72 hours as an offline fallback, shown with their age, so a stale forecast is never mistaken for the current one. This is not a substitute for an official marine forecast.
+
+**Current arrows.** With **Show current arrows (red) at the boat and across the chart**, a red arrow at the boat (just below it) and one per field point show the ocean current from Open-Meteo's marine model, which includes tides. Like the OpenCPN Online Charts plugin, an arrow points the way the water flows and grows from 14 px with the speed, up to 3 kn; the panel and the hover text give the speed in knots and the direction it flows to (for example *2.2 kn to ESE*). The marine model answers a land point with its nearest sea cell, so waves and currents are left out where the point's terrain is above 2 m. The model's grid is about 8 km, so in narrow channels and close to the coast use official tidal-stream atlases and tables.
 
 ### i-Boating
 
@@ -357,7 +359,7 @@ serialports.js                Serial port listing, naming and NMEA/baud detectio
 bathymetry.js                 Open bathymetry sources and layers
 popup.html/css/js             Extension popup
 nmea.js                       NMEA 0183, JSON and Signal K parser
-weather.js                    Open-Meteo forecast, wind barbs, field and timeline
+weather.js                    Open-Meteo forecast, wind barbs, wave and current arrows, field and timeline
 bridge/gps_bridge.py          TCP/UDP to WebSocket bridge
 bridge/requirements.txt       Python dependency
 vendor/                       MapLibre GL JS 5.24.0 and its licence

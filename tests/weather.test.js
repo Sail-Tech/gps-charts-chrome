@@ -34,9 +34,21 @@ const Weather = require('../weather.js');
 
 // Marine parsing.
 {
-  const parsed = Weather.parseMarine({ current: { wave_height: 1.6, wave_direction: 240, wave_period: 7 } });
-  assert.deepEqual(parsed, { waveHeight: 1.6, waveDir: 240, wavePeriod: 7 });
+  const parsed = Weather.parseMarine({ current: { wave_height: 1.6, wave_direction: 240, wave_period: 7, ocean_current_velocity: 3.704, ocean_current_direction: 45 } });
+  assert.deepEqual(parsed, { waveHeight: 1.6, waveDir: 240, wavePeriod: 7, currentSpeed: 2, currentDir: 45 });
   assert.equal(Weather.parseMarine({}).waveHeight, null);
+  assert.equal(Weather.parseMarine({}).currentSpeed, null);
+  assert.ok(Weather.marineUrl(50, -1).includes('ocean_current_velocity'));
+}
+
+// Ocean current helpers: km/h to knots, and the land mask from Open-Meteo's point elevation.
+{
+  assert.equal(Weather.knotsFromKmh(1.852), 1);
+  assert.equal(Weather.knotsFromKmh(null), null);
+  assert.equal(Weather.isLand(9), true);
+  assert.equal(Weather.isLand(2), false);
+  assert.equal(Weather.isLand(0), false);
+  assert.equal(Weather.isLand(null), false);
 }
 
 // Compass from degrees (16-point), wrapping and nulls.
@@ -96,6 +108,21 @@ assert.equal(Weather.degToCompass(null), null);
   assert.ok(arrow.includes('<line') && arrow.includes('<path'));
   assert.ok(arrow.includes('rotate(270)'));
   const none = Weather.waveArrowSvg(null, 0);
+  assert.ok(none.includes('<svg') && !none.includes('<line'));
+}
+
+// Current arrow: red, pointing the way the current flows (no +180), longer with speed up to 3 kn.
+{
+  const slow = Weather.currentArrowSvg(0, 90);
+  const fast = Weather.currentArrowSvg(3, 90);
+  const faster = Weather.currentArrowSvg(6, 90);
+  assert.ok(fast.includes('#d62828') && fast.includes('rotate(90)'));
+  const shaftEnd = svg => Number(/<line x1="0" y1="([\d.]+)"/.exec(svg)[1]);
+  assert.equal(shaftEnd(slow), 7);    // 14 px long at 0 kn
+  assert.equal(shaftEnd(fast), 23);   // 46 px long at 3 kn
+  assert.equal(shaftEnd(faster), 23); // capped at 3 kn
+  assert.ok(Weather.currentArrowSvg(1, 400).includes('rotate(40)'));
+  const none = Weather.currentArrowSvg(null, 90);
   assert.ok(none.includes('<svg') && !none.includes('<line'));
 }
 
@@ -182,8 +209,10 @@ assert.equal(Weather.degToCompass(null), null);
 
   const s = Weather.parseSeries(
     { hourly: { time: ['2026-10-31T12:00', '2026-10-31T13:00'], wind_speed_10m: [10, 12], wind_direction_10m: [180, 190], wind_gusts_10m: [15, 18], temperature_2m: [14, 15], surface_pressure: [1010, 1011] } },
-    { hourly: { time: ['2026-10-31T12:00', '2026-10-31T13:00'], wave_height: [1.0, 1.2], wave_direction: [200, 210], wave_period: [6, 7] } }
+    { hourly: { time: ['2026-10-31T12:00', '2026-10-31T13:00'], wave_height: [1.0, 1.2], wave_direction: [200, 210], wave_period: [6, 7], ocean_current_velocity: [1.852, 0], ocean_current_direction: [270, 90] } }
   );
+  assert.equal(s.hours[0].currentSpeed, 1);
+  assert.equal(s.hours[0].currentDir, 270);
   assert.equal(s.times.length, 2);
   assert.equal(s.times[0], '2026-10-31T12:00Z');
   assert.equal(s.hours[0].windSpeed, 10);
@@ -199,14 +228,20 @@ assert.equal(Weather.degToCompass(null), null);
   const fs = Weather.parseFieldSeries(
     [{ hourly: { time: times.map(t => t.slice(0, -1)), wind_speed_10m: [10, 11, 12], wind_direction_10m: [180, 185, 190], wind_gusts_10m: [15, 16, 17] } },
      { hourly: { time: times.map(t => t.slice(0, -1)), wind_speed_10m: [20, 21, 22], wind_direction_10m: [200, 205, 210], wind_gusts_10m: [25, 26, 27] } }],
-    [{ hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [1, 1.1, 1.2], wave_direction: [100, 110, 120] } },
-     { hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [2, 2.1, 2.2], wave_direction: [120, 130, 140] } }],
+    [{ elevation: 0, hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [1, 1.1, 1.2], wave_direction: [100, 110, 120], ocean_current_velocity: [3.704, 1.852, 0], ocean_current_direction: [10, 20, 30] } },
+     { elevation: 9, hourly: { time: times.map(t => t.slice(0, -1)), wave_height: [2, 2.1, 2.2], wave_direction: [120, 130, 140] } }],
     [{ lat: 50, lon: -1 }, { lat: 51, lon: -2 }]
   );
   assert.equal(fs.times.length, 3);
   assert.equal(fs.points.length, 2);
   assert.equal(fs.points[0].hours[0].windSpeed, 10);
   assert.equal(fs.points[1].hours[2].waveHeight, 2.2);
+  assert.equal(fs.points[0].hours[0].currentSpeed, 2);
+  assert.equal(fs.points[0].hours[2].currentDir, 30);
+  assert.equal(fs.points[1].hours[0].currentSpeed, null);
+  assert.equal(fs.points[0].elevation, 0);
+  assert.equal(fs.points[1].elevation, 9);
+  assert.ok(Weather.fieldHourlyMarineUrl([{ lat: 50, lon: -1 }]).includes('ocean_current_direction'));
 }
 
 // fetchConditions merges both endpoints and throws only when neither has data.
@@ -269,6 +304,16 @@ assert.equal(Weather.degToCompass(null), null);
   assert.equal(series.hours.length, 1);
   assert.equal(series.hours[0].windSpeed, 10);
   assert.equal(series.hours[0].waveHeight, 1.2);
+
+  // Currents alone still request the marine series (wind off, waves off).
+  const asked = [];
+  global.fetch = async url => {
+    asked.push(url.includes('marine') ? 'marine' : 'forecast');
+    return { ok: true, json: async () => [{ elevation: 0, hourly: { time: ['2026-10-31T12:00'], ocean_current_velocity: [1.852], ocean_current_direction: [90] } }] };
+  };
+  const currentsOnly = await Weather.fetchFieldSeries([{ lat: 50, lon: -1 }], { wind: false, current: true });
+  assert.deepEqual(asked, ['marine']);
+  assert.equal(currentsOnly.points[0].hours[0].currentSpeed, 1);
 
   // Offline (both endpoints fail), fetchFieldSeries rejects so the cached field is not overwritten.
   global.fetch = async () => { throw new Error('offline'); };
