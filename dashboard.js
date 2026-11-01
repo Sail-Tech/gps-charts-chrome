@@ -968,6 +968,63 @@ function boatElement() {
   return element;
 }
 
+/* ---------- Display brightness: steps down from day to a red night mode ---------- */
+
+// Each press dims one step; after night it returns to day. The dusk steps dim the whole page; night
+// turns the light chart and panels dark and everything red, which keeps night vision.
+const DISPLAY_LEVELS = [
+  { name: 'Day', brightness: 1 },
+  { name: 'Dusk 75%', brightness: 0.75 },
+  { name: 'Dusk 55%', brightness: 0.55 },
+  { name: 'Dusk 40%', brightness: 0.4 },
+  { name: 'Night (red)', night: true }
+];
+let displayLevel = 0;
+
+const BRIGHTNESS_ICONS = {
+  day: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4.5" fill="currentColor"/><g stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v2.5M12 19v2.5M2.5 12H5M19 12h2.5M5.3 5.3l1.8 1.8M16.9 16.9l1.8 1.8M5.3 18.7l1.8-1.8M16.9 7.1l1.8-1.8"/></g></svg>',
+  dusk: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 5a7 7 0 0 1 0 14z" fill="currentColor"/></svg>',
+  night: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" fill="currentColor"/></svg>'
+};
+
+function applyDisplayLevel(level) {
+  displayLevel = level >= 0 && level < DISPLAY_LEVELS.length ? level : 0;
+  const step = DISPLAY_LEVELS[displayLevel];
+  const root = document.documentElement;
+  root.classList.toggle('night', Boolean(step.night));
+  root.style.filter = step.night || step.brightness === 1 ? '' : `brightness(${step.brightness})`;
+  const button = document.querySelector('.brightness-button');
+  if (button) {
+    const next = DISPLAY_LEVELS[(displayLevel + 1) % DISPLAY_LEVELS.length].name;
+    button.innerHTML = BRIGHTNESS_ICONS[step.night ? 'night' : displayLevel === 0 ? 'day' : 'dusk'];
+    button.title = `Display: ${step.name}. Press for ${next}.`;
+    button.setAttribute('aria-label', button.title);
+  }
+}
+
+class BrightnessControl {
+  onAdd() {
+    this.container = document.createElement('div');
+    this.container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'brightness-button';
+    button.addEventListener('click', () => {
+      applyDisplayLevel((displayLevel + 1) % DISPLAY_LEVELS.length);
+      config.displayLevel = displayLevel;
+      GPSPlatform.storage.set({ displayLevel }).catch(() => {});
+      log(`Display: ${DISPLAY_LEVELS[displayLevel].name}.`);
+    });
+    this.container.append(button);
+    setTimeout(() => applyDisplayLevel(displayLevel));
+    return this.container;
+  }
+
+  onRemove() {
+    this.container.remove();
+  }
+}
+
 /* ---------- Map ---------- */
 
 function initializeMap() {
@@ -1021,6 +1078,7 @@ function initializeMap() {
     attributionControl: false
   });
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
+  map.addControl(new BrightnessControl(), 'top-right');
   map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
   map.on('style.load', () => {
     GPSBathymetry.applyVisibility(map, config);
@@ -1621,12 +1679,17 @@ async function connect() {
 /* ---------- Start-up ---------- */
 
 async function initialize() {
-  const keys = [...SETTING_IDS, 'tileUrl', 'tileMinZoom', 'tileMaxZoom', 'attribution', 'latestFix', 'serialPortKey'];
+  const keys = [...SETTING_IDS, 'tileUrl', 'tileMinZoom', 'tileMaxZoom', 'attribution', 'latestFix', 'serialPortKey', 'displayLevel'];
   config = await GPSPlatform.storage.get(keys);
+  applyDisplayLevel(Number(config.displayLevel) || 0);
   if (config.weatherEnabled === undefined) config.weatherEnabled = true;
   if (config.windBarbEnabled === undefined) config.windBarbEnabled = true;
   if (!config.tempUnits) config.tempUnits = 'C';
   if (!config.waveUnits) config.waveUnits = 'm';
+  // Options added after the first install, for stores that predate them.
+  if (config.seamarkInfoEnabled === undefined) config.seamarkInfoEnabled = true;
+  if (config.aisEnabled === undefined) config.aisEnabled = true;
+  if (config.aisVectorMinutes === undefined) config.aisVectorMinutes = 6;
   pruneConnectionModes();
   for (const id of SETTING_IDS) {
     if (config[id] !== undefined) {

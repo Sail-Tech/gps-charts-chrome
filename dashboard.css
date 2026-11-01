@@ -17,6 +17,17 @@
 .ais-list li button { display: flex; justify-content: space-between; gap: 8px; width: 100%; margin: 0 0 4px; padding: 6px 8px; border-radius: 5px; background: #edf3f6; border: 1px solid transparent; font-weight: 500; font-size: 12px; text-align: left; }
 .ais-list li button span:last-child { color: #69808c; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .ais-list li.danger button { border-color: #d62828; background: #fdecec; }
+.brightness-button { display: grid; place-items: center; color: #073b55; }
+/* Night mode: the light chart and panels are inverted to dark and every colour turned red (dim red
+   keeps night vision); the dark bars are only reddened. */
+html.night { --night-light: invert(1) hue-rotate(180deg) grayscale(1) contrast(1.15) brightness(.42) sepia(1) saturate(6) hue-rotate(-50deg); --night-dark: grayscale(1) contrast(1.1) brightness(.6) sepia(1) saturate(6) hue-rotate(-50deg); }
+html.night body, html.night .layout, html.night .map-area { background: #000; }
+html.night .sidebar, html.night #map, html.night .map-footer { filter: var(--night-light); }
+html.night .topbar, html.night .timeline, html.night .map-notice { filter: var(--night-dark); }
+/* Inside the inverted chart a light read-out comes out dark. */
+html.night .info-popup .maplibregl-popup-content { background: rgba(236, 241, 244, .96); color: #0a2638; }
+html.night .info-popup .maplibregl-popup-tip { border-top-color: rgba(236, 241, 244, .96); border-bottom-color: rgba(236, 241, 244, .96); }
+html.night .info-popup .info-note { color: #48606c; }
 .info-popup .info-note { margin-top: 4px; color: #a9c7d6; font-size: 10px; }
 
 /* Forecast timeline: a translucent bar over the chart with a play button and a styled time slider. */

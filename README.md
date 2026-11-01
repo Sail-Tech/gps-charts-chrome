@@ -16,6 +16,7 @@ The same dashboard also runs as a **web app for iPhone and Android** at **<https
 - **C-MAP**: the boat appears as a *Pinned location* that moves with the GPS without reloading the page.
 - **Garmin Marine**: opens centred on a 12-character geohash of the GPS position. The extension tries once to place Garmin's native marker; if it does not appear, click the map centre.
 - **Collapsible menus** so the chart can use the whole window.
+- **Brightness and night mode:** a button on the chart dims the dashboard step by step (75%, 55%, 40%) and then switches to a red night mode that keeps night vision.
 - **Web app (PWA)** for iPhone, iPad and Android: installable from the browser, works offline, uses the device's GPS.
 
 ## Quick installation
@@ -41,6 +42,7 @@ To update later, replace the folder's files (or `git pull`), then click the relo
 - **Base chart** selector: Esri World Ocean Base (default), OpenStreetMap or any custom XYZ raster source, with OpenSeaMap seamarks on top.
 - Open bathymetry with depth contours, labels, soundings and depth colours from Open Waters Seascape/EMODnet/GEBCO, in **metres or feet**.
 - **Collapsible menus**: the ☰ button hides or shows the whole side panel, and each section heading folds its section. Both are remembered.
+- **Brightness**: the sun button under the chart's zoom buttons steps through **Day**, **Dusk 75%**, **Dusk 55%**, **Dusk 40%** and **Night (red)**, then back to Day. The dusk steps dim the whole page. Night turns the chart and side panel dark and every colour red, the way chartplotters protect night vision (colours such as the vessel types and the red danger ring then look alike, so check them by tapping). The choice is remembered. The page cannot dim the screen's own backlight: turn that down too.
 - **Offline cache** for every chart tile viewed (base chart, seamarks, bathymetry and label fonts), with size limit, refresh age, three modes and **Save visible area for offline use**.
 - i-Boating opened at the boat position, with its own boat marker and heading line moved as the GPS updates, keeping your zoom.
 - C-MAP opened at the boat position as a *Pinned location*, with the pin moved as the GPS updates.

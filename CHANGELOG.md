@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0
+
+- **Brightness and night mode:** a button under the chart's zoom buttons dims the dashboard one step per press, Day → Dusk 75% → Dusk 55% → Dusk 40% → Night (red), and then back to Day. Night turns the light chart and panels dark and every colour red to keep night vision; the dark top bar and forecast timeline are only reddened, and the read-outs stay dark. The level is remembered.
+
 ## 0.10.0
 
 - **AIS targets from the boat's own receiver:** `!AIVDM` sentences arriving over the WebSocket, the bridge or the serial port (until now ignored) are decoded: Class A and B positions, static and voyage data, aids to navigation, SAR aircraft and safety messages, with multi-sentence messages joined. No online AIS service is used.

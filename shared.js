@@ -20,6 +20,7 @@ const GPS_DEFAULTS = {
   seamarkInfoEnabled: true,
   aisEnabled: true,
   aisVectorMinutes: 6,
+  displayLevel: 0,
   depthUnits: 'm',
   weatherEnabled: true,
   weatherModel: 'best_match',
