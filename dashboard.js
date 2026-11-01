@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const DEFAULT_FIX = { lat: 50.775, lon: -1.3 };
 const SETTING_IDS = [
   'connectionMode', 'provider', 'zoom', 'autoCenterProvider', 'updateSeconds', 'wsUrl', 'serialBaud',
-  'bathymetryEnabled', 'bathymetryShading', 'depthUnits', 'seamarkInfoEnabled', 'aisEnabled', 'aisVectorMinutes',
+  'bathymetryEnabled', 'bathymetryShading', 'depthColours', 'depthUnits', 'seamarkInfoEnabled', 'aisEnabled', 'aisVectorMinutes',
   'weatherEnabled', 'weatherModel', 'windBarbEnabled', 'windFieldEnabled', 'waveFieldEnabled', 'currentFieldEnabled', 'tempUnits', 'waveUnits',
   'cacheEnabled', 'cacheMode', 'cacheMaxMB', 'cacheMaxAgeDays', 'prefetchLevels'
 ];
@@ -1113,6 +1113,28 @@ function initializeMap() {
   map.on('dragstart', () => { $('followBoat').checked = false; });
   map.on('moveend', scheduleField);
   map.on('moveend', requestSeamarkInfo);
+  map.on('idle', updateDepthSource);
+}
+
+/* Names the survey the depths come from under the boat, or under the chart centre when the boat is out of view. */
+function updateDepthSource() {
+  if (!map || !mapReady) return;
+  let text;
+  if (config.bathymetryEnabled === false) {
+    text = 'Turn on the depth contours to see which survey the depths come from.';
+  } else {
+    const boatInView = lastFix && map.getBounds().contains([lastFix.lon, lastFix.lat]);
+    const point = boatInView ? map.project([lastFix.lon, lastFix.lat]) : map.project(map.getCenter());
+    const [best, ...others] = GPSBathymetry.sourcesAt(map, point);
+    const place = boatInView ? 'at the boat' : 'at the chart centre';
+    if (!best) {
+      text = `No survey listed ${place}: outside the surveyed areas, or not loaded yet.`;
+    } else {
+      text = `Depths ${place}: ${best.name}, detailed to zoom ${best.maxzoom}.`;
+      if (others.length) text += ` Also covered by ${others.map(source => source.name).join('; ')}.`;
+    }
+  }
+  if ($('depthSource').textContent !== text) $('depthSource').textContent = text;
 }
 
 // The follow zoom is not limited by the chart's max zoom: MapLibre enlarges the deepest tiles beyond it.
@@ -1293,7 +1315,7 @@ async function saveSetting(id) {
   if (id === 'provider') updateProviderUi();
   await GPSPlatform.storage.set({ [id]: value });
   if (id === 'depthUnits' && changed) {
-    GPSBathymetry.applyUnits(map, config);
+    GPSBathymetry.applyStyle(map, config);
     log(`Depths shown in ${value === 'ft' ? 'feet' : 'metres'}.`);
     await GPSPlatform.send({ type: 'SETTINGS_CHANGED', id });
   }
@@ -1303,8 +1325,13 @@ async function saveSetting(id) {
     if (!value) hideInfo(true);
     requestSeamarkInfo();
   }
+  if (id === 'depthColours' && changed) {
+    GPSBathymetry.applyStyle(map, config);
+    log(value === 'topo' ? 'Depth colours: Topo.' : 'Depth colours: Chart.');
+  }
   if (['bathymetryEnabled', 'bathymetryShading'].includes(id)) {
     GPSBathymetry.applyVisibility(map, config);
+    updateDepthSource();
     log(id === 'bathymetryEnabled'
       ? (value ? 'Open bathymetry enabled.' : 'Open bathymetry disabled.')
       : (value ? 'Depth shading enabled.' : 'Depth shading disabled.'));

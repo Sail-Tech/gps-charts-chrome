@@ -1,15 +1,23 @@
 'use strict';
 
 const GPSBathymetry = (() => {
-  const CONTOUR_LAYERS = ['contour-lines', 'contour-labels', 'soundings'];
-  const SHADING_LAYERS = ['depth-shading', 'depth-areas', 'depth-hillshade'];
+  const CONTOUR_LAYERS = ['contour-lines', 'contour-labels', 'soundings', 'depth-coverage'];
+  const CHART_LAYERS = ['depth-shading', 'depth-areas', 'depth-hillshade'];
+  const TOPO_LAYERS = ['depth-topo', 'depth-topo-hillshade'];
+  // Open Waters' chart view stresses the 10 m contour, and the 2 m one from zoom 11 near the coast.
+  const NEAR_COAST_ZOOM = 11;
+  const COLOURS = {
+    chart: { major: '#4c5b63', minor: '#657f8c', text: '#4f6874' },
+    topo: { major: '#1f1f1f', minor: '#3a3a3a', text: '#222222' }
+  };
 
   /* Open Waters ships both metric and feet contour sets (sys "m" / "ft") and soundings in both units. */
   function units(config) {
     const feet = config.depthUnits === 'ft';
+    const major = depth => ['==', ['get', feet ? 'depth_ft' : 'depth_abs_m'], depth];
     return {
       contourFilter: feet ? ['==', ['get', 'sys'], 'ft'] : ['!=', ['get', 'sys'], 'ft'],
-      contourMajor: feet ? ['==', ['get', 'depth_ft'], 30] : ['==', ['get', 'depth_abs_m'], 10],
+      contourMajor: feet ? [major(30), major(6)] : [major(10), major(2)],
       contourLabel: ['to-string', ['get', feet ? 'depth_ft' : 'depth_abs_m']],
       sounding: feet
         ? ['to-string', ['round', ['get', 'depth_ft']]]
@@ -25,6 +33,33 @@ const GPSBathymetry = (() => {
     };
   }
 
+  function scheme(config) {
+    return config.depthColours === 'topo' ? 'topo' : 'chart';
+  }
+
+  // Zoom must be the outermost expression, so the major contour is chosen inside each step.
+  function contourPaint(config) {
+    const [offshore, nearCoast] = units(config).contourMajor;
+    const colours = COLOURS[scheme(config)];
+    const byZoom = (major, minor) => [
+      'step', ['zoom'],
+      ['case', offshore, major, minor],
+      NEAR_COAST_ZOOM, ['case', nearCoast, major, minor]
+    ];
+    return {
+      lineColor: byZoom(colours.major, colours.minor),
+      lineWidth: byZoom(1.6, 0.9),
+      textColor: colours.text
+    };
+  }
+
+  function visibility(config) {
+    const contours = config.bathymetryEnabled !== false;
+    const shading = contours && config.bathymetryShading === true;
+    const topo = scheme(config) === 'topo';
+    return { contours, chart: shading && !topo, topo: shading && topo };
+  }
+
   function sources(wrapUrl = url => url) {
     return {
       'seascape-dem': {
@@ -38,18 +73,34 @@ const GPSBathymetry = (() => {
         type: 'vector',
         url: wrapUrl('https://tiles.openwaters.io/seascape/vector.json'),
         attribution: '© Open Waters · EMODnet · GEBCO'
+      },
+      // Which survey each area's depths come from, with its name and deepest useful zoom.
+      'seascape-coverage': {
+        type: 'vector',
+        url: wrapUrl('https://tiles.openwaters.io/seascape/coverage.json'),
+        attribution: '© Open Waters · EMODnet · GEBCO'
       }
     };
   }
 
   function layers(config) {
-    const contoursVisible = config.bathymetryEnabled !== false;
-    const shadingVisible = contoursVisible && config.bathymetryShading === true;
-    const contourVisibility = contoursVisible ? 'visible' : 'none';
-    const shadingVisibility = shadingVisible ? 'visible' : 'none';
+    const shown = visibility(config);
+    const contourVisibility = shown.contours ? 'visible' : 'none';
+    const shadingVisibility = shown.chart ? 'visible' : 'none';
+    const topoVisibility = shown.topo ? 'visible' : 'none';
     const unit = units(config);
+    const paint = contourPaint(config);
 
     return [
+      {
+        // Invisible: only queried for the depth source under the boat or the chart centre.
+        id: 'depth-coverage',
+        type: 'fill',
+        source: 'seascape-coverage',
+        'source-layer': 'coverage',
+        layout: { visibility: contourVisibility },
+        paint: { 'fill-opacity': 0 }
+      },
       {
         id: 'depth-shading',
         type: 'color-relief',
@@ -114,6 +165,36 @@ const GPSBathymetry = (() => {
         }
       },
       {
+        // Open Waters' Topo view: a colour per depth band shows banks and channels at a glance.
+        // Land above the drying height is left clear so the base chart shows through.
+        id: 'depth-topo',
+        type: 'color-relief',
+        source: 'seascape-dem',
+        layout: { visibility: topoVisibility },
+        paint: {
+          'color-relief-color': [
+            'interpolate', ['linear'], ['elevation'],
+            -11000, '#0d1340', -6000, '#18246e', -3000, '#1f3fb0', -1000, '#1f6fd6',
+            -200, '#1aa0d8', -90, '#33c9b8', -55, '#7fd04a', -35, '#f2e33a',
+            -18, '#f59331', -5, '#e8402f', 0, '#d7263d',
+            0.00390625, '#f4b6c8', 1.99609375, '#f4b6c8',
+            2, 'rgba(244,182,200,0)'
+          ],
+          'color-relief-opacity': 0.85,
+          'resampling': 'nearest'
+        }
+      },
+      {
+        id: 'depth-topo-hillshade',
+        type: 'hillshade',
+        source: 'seascape-dem',
+        layout: { visibility: topoVisibility },
+        paint: {
+          'hillshade-method': 'igor',
+          'hillshade-exaggeration': 0.3
+        }
+      },
+      {
         id: 'contour-lines',
         type: 'line',
         source: 'seascape-vector',
@@ -126,8 +207,8 @@ const GPSBathymetry = (() => {
           'line-cap': 'round'
         },
         paint: {
-          'line-color': ['case', unit.contourMajor, '#4c5b63', '#657f8c'],
-          'line-width': ['case', unit.contourMajor, 1.6, 0.9],
+          'line-color': paint.lineColor,
+          'line-width': paint.lineWidth,
           'line-opacity': 0.9
         }
       },
@@ -149,7 +230,7 @@ const GPSBathymetry = (() => {
           'text-padding': 50
         },
         paint: {
-          'text-color': '#4f6874',
+          'text-color': paint.textColor,
           'text-halo-color': 'rgba(255,255,255,0.75)',
           'text-halo-width': 1
         }
@@ -171,7 +252,7 @@ const GPSBathymetry = (() => {
           ]
         },
         paint: {
-          'text-color': '#4f6874',
+          'text-color': paint.textColor,
           'text-halo-color': 'rgba(255,255,255,0.75)',
           'text-halo-width': 1
         }
@@ -181,26 +262,43 @@ const GPSBathymetry = (() => {
 
   function applyVisibility(map, config) {
     if (!map) return;
-    const contoursVisible = config.bathymetryEnabled !== false;
-    const shadingVisible = contoursVisible && config.bathymetryShading === true;
-    for (const id of CONTOUR_LAYERS) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', contoursVisible ? 'visible' : 'none');
-    }
-    for (const id of SHADING_LAYERS) {
-      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', shadingVisible ? 'visible' : 'none');
-    }
+    const shown = visibility(config);
+    const set = (ids, visible) => {
+      for (const id of ids) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none');
+      }
+    };
+    set(CONTOUR_LAYERS, shown.contours);
+    set(CHART_LAYERS, shown.chart);
+    set(TOPO_LAYERS, shown.topo);
   }
 
-  function applyUnits(map, config) {
+  /* Applies the depth units and the colour scheme to the contour and sounding layers. */
+  function applyStyle(map, config) {
     if (!map || !map.getLayer('contour-lines')) return;
     const unit = units(config);
+    const paint = contourPaint(config);
     map.setFilter('contour-lines', unit.contourFilter);
-    map.setPaintProperty('contour-lines', 'line-color', ['case', unit.contourMajor, '#4c5b63', '#657f8c']);
-    map.setPaintProperty('contour-lines', 'line-width', ['case', unit.contourMajor, 1.6, 0.9]);
+    map.setPaintProperty('contour-lines', 'line-color', paint.lineColor);
+    map.setPaintProperty('contour-lines', 'line-width', paint.lineWidth);
     map.setFilter('contour-labels', unit.contourFilter);
     map.setLayoutProperty('contour-labels', 'text-field', unit.contourLabel);
+    map.setPaintProperty('contour-labels', 'text-color', paint.textColor);
     map.setLayoutProperty('soundings', 'text-field', unit.sounding);
+    map.setPaintProperty('soundings', 'text-color', paint.textColor);
+    applyVisibility(map, config);
   }
 
-  return { sources, layers, applyVisibility, applyUnits };
+  /* The surveys under a screen point, most detailed first: [{ id, name, maxzoom }]. */
+  function sourcesAt(map, point) {
+    if (!map || !map.getLayer('depth-coverage')) return [];
+    const found = new Map();
+    for (const feature of map.queryRenderedFeatures(point, { layers: ['depth-coverage'] })) {
+      const { source_id: id, source_name: name, source_maxzoom: maxzoom } = feature.properties;
+      if (id && name) found.set(id, { id, name, maxzoom: Number(maxzoom) || 0 });
+    }
+    return [...found.values()].sort((a, b) => b.maxzoom - a.maxzoom);
+  }
+
+  return { sources, layers, applyVisibility, applyStyle, sourcesAt };
 })();

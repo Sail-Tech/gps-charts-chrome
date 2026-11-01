@@ -171,6 +171,12 @@
         </div>
         <label class="check"><input id="bathymetryEnabled" type="checkbox" checked> Show depth contours and soundings</label>
         <label class="check"><input id="bathymetryShading" type="checkbox" checked> Show depth colours and shading</label>
+        <label>Depth colours
+          <select id="depthColours">
+            <option value="chart">Chart (light blues, darker in the shallows)</option>
+            <option value="topo">Topo (a colour per depth band)</option>
+          </select>
+        </label>
         <label class="check"><input id="seamarkInfoEnabled" type="checkbox" checked> Show light and mark details on hover or tap (OpenStreetMap, from zoom 11)</label>
         <label>Depth units
           <select id="depthUnits">
@@ -178,7 +184,7 @@
             <option value="ft">Feet (ft)</option>
           </select>
         </label>
-        <p class="hint">Open bathymetry from Open Waters · EMODnet/GEBCO. In European waters the source is usually EMODnet (~115 m); it is not equivalent to C-MAP HRB or sonar contours.</p>
+        <p class="hint">Open bathymetry from Open Waters. <span id="depthSource">The survey under the boat or the chart centre shows here once the depths load.</span> It is not equivalent to C-MAP HRB or sonar contours.</p>
         <label class="check"><input id="followBoat" type="checkbox" checked> Follow the boat on the dashboard</label>
         <button id="centerBoat" class="secondary full">Centre on the boat</button>
         <button id="clearTrack" class="link-button">Clear track</button>

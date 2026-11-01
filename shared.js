@@ -17,6 +17,7 @@ const GPS_DEFAULTS = {
   tileMaxZoom: 10,
   bathymetryEnabled: true,
   bathymetryShading: true,
+  depthColours: 'chart',
   seamarkInfoEnabled: true,
   aisEnabled: true,
   aisVectorMinutes: 6,

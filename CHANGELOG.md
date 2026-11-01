@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.0
+
+Brings the depth chart in line with the current [Open Waters Seascape viewer](https://openwaters.io/charts/seascape/viewer/).
+
+- **Depth colours, Topo:** a new **Depth colours** choice under **Dashboard chart**. **Chart** keeps the light blues; **Topo** gives each depth band its own colour, from red in the shallows through orange, yellow and green to deep blue, with a finer relief shading, so banks and channels stand out at a glance. Drying areas are pink and land is left clear for the base chart. The choice is remembered.
+- **2 m contour near the coast:** from zoom 11 the emphasised contour is 2 m (6 ft) instead of 10 m (30 ft), as on Open Waters' chart view. Zoomed out, 10 m (30 ft) stays emphasised.
+- **Where the depths come from:** the sidebar names the survey under the boat, or under the chart centre when the boat is out of view, with the zoom it is detailed to, and the other surveys that cover the spot (for example *CCO Multibeam Bathymetry (England & Wales nearshore, 0.25–4 m), detailed to zoom 15*). It reads Open Waters' new coverage layer, which replaces the fixed "usually EMODnet (~115 m)" note.
+
 ## 0.11.0
 
 - **Brightness and night mode:** a button under the chart's zoom buttons dims the dashboard one step per press, Day → Dusk 75% → Dusk 55% → Dusk 40% → Night (red), and then back to Day. Night turns the light chart and panels dark and every colour red to keep night vision; the dark top bar and forecast timeline are only reddened, and the read-outs stay dark. The level is remembered.

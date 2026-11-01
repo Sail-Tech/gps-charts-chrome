@@ -233,19 +233,20 @@ The ☰ button at the top left hides the side panel so the chart uses the whole 
 
 ### Open bathymetry
 
-**Show depth contours and soundings** is on by default and shows depth contours, their values and point soundings. **Show depth colours and shading** adds coloured depth areas, land and seabed relief. It is on by default because it draws the coastline where the base chart has little detail; it uses more data and can be turned off on its own. **Follow the boat on the dashboard** is also on whenever the dashboard opens; dragging the chart turns it off until **Centre on the boat** is used.
+**Show depth contours and soundings** is on by default and shows depth contours, their values and point soundings. **Show depth colours and shading** adds coloured depth areas, land and seabed relief. **Depth colours** picks how: **Chart** (light blues, darker in the shallows, as on a paper chart) or **Topo** (a colour per depth band, red in the shallows to deep blue, with finer relief shading, as in Open Waters' Topo view). It is on by default because it draws the coastline where the base chart has little detail; it uses more data and can be turned off on its own. **Follow the boat on the dashboard** is also on whenever the dashboard opens; dragging the chart turns it off until **Centre on the boat** is used.
 
 Version 0.3.0 turns depth contours and depth colours on once for earlier installations too; after that, your choice is kept.
 
-**Depth units** switches between **metres** and **feet**. Open Waters publishes separate contour sets for each system, so feet shows the real feet contours (for example 6, 18, 30 and 60 ft, with 30 ft emphasised), not converted metre lines. Soundings show whole feet, or metres with the decimal as a subscript. The same setting opens i-Boating with `?depth=ft` or `?depth=m`, and an open i-Boating tab is reloaded when it changes. Depth colours keep their metre bands (0–2, 2–5, 5–10, 10–20, 20–50 m and deeper). C-MAP's units are set in C-MAP itself.
+**Depth units** switches between **metres** and **feet**. Open Waters publishes separate contour sets for each system, so feet shows the real feet contours (for example 6, 18, 30 and 60 ft), not converted metre lines. The 10 m (30 ft) contour is emphasised, and from zoom 11 the 2 m (6 ft) one, as on Open Waters' chart view. Soundings show whole feet, or metres with the decimal as a subscript. The same setting opens i-Boating with `?depth=ft` or `?depth=m`, and an open i-Boating tab is reloaded when it changes. The Chart depth colours keep their metre bands (0–2, 2–5, 5–10, 10–20, 20–50 m and deeper). C-MAP's units are set in C-MAP itself.
 
 The layers use these Open Waters resources:
 
 - `https://tiles.openwaters.io/seascape/vector.json` for contours, areas and soundings;
 - `https://tiles.openwaters.io/seascape/raster.json` for the digital depth model;
+- `https://tiles.openwaters.io/seascape/coverage.json` for which survey covers each area;
 - `https://tiles.openwaters.io/fonts/{fontstack}/{range}.pbf` for the labels.
 
-On the European coast tested, the coverage is EMODnet Bathymetry 2024 DTM, with a native resolution of about 115 metres. Lines stay visible at high zoom, but zooming in does not add measurements. This is not equivalent to C-MAP High Resolution Bathymetry, Genesis or i-Boating Sonar Contours.
+The sidebar names the survey the depths come from under the boat (or the chart centre), with the zoom it is detailed to. Much of the European coast is EMODnet Bathymetry 2024 DTM, with a native resolution of about 115 metres: lines stay visible at high zoom, but zooming in does not add measurements. Some coasts have detailed surveys, such as the multibeam surveys along England's coast (0.25–4 m). This is not equivalent to C-MAP High Resolution Bathymetry, Genesis or i-Boating Sonar Contours.
 
 Open Waters data is published under CC BY 4.0, with the attribution and terms of the original sources. The layer depends on an external service with no availability guarantee; if it fails, the base chart and the GPS keep working.
 
