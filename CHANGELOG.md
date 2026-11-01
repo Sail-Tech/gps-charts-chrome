@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.1
+
+- **Garmin marker for the OpenCPN plugin:** a Garmin Marine tab opened in Chrome by another program with `gpscharts=pin` in its address (the OpenCPN Online Charts plugin's **Open provider → Open Garmin Marine**) now gets the same single marker attempt and 500 m check as a tab opened from the dashboard. Each tab is tried once; only Garmin Marine pages with a geohash `key` qualify.
+
 ## 0.7.0
 
 - **Garmin Marine provider:** opens Garmin's public Marine chart centred on the current or last known GPS position, encoded as a standard 12-character geohash, on Garmin's English page. Garmin is never opened at the demonstration fallback position.

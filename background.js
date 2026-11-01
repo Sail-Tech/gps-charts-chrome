@@ -95,28 +95,33 @@ const PROVIDERS = {
       // the tab as loaded again.
       if (!garminMarkerPending) return false;
       garminMarkerPending = false;
-      const [result] = await chrome.scripting.executeScript({
-        target: { tabId },
-        world: 'ISOLATED',
-        func: gpsChartsGarminMarker
-      });
-      const outcome = result?.result || 'unavailable';
-      const messages = {
-        marked: 'Garmin marker placed at the vessel position.',
-        offset: 'Garmin placed its marker away from the vessel position. Click the map centre to move it.',
-        manual: 'Garmin is centred on the vessel. Click the map centre to place its marker.',
-        unavailable: 'Garmin was opened with the vessel position. When the map loads, click its centre to place the marker.'
-      };
-      // Deliberately no coordinates, geohashes, or complete provider URLs in logs/messages.
-      chrome.runtime.sendMessage({
-        type: 'PROVIDER_STATUS',
-        provider: 'garmin',
-        text: messages[outcome] || messages.unavailable
-      }).catch(() => {});
-      return outcome === 'marked';
+      return (await placeGarminMarker(tabId)) === 'marked';
     }
   }
 };
+
+// Runs the single marker attempt in a Garmin tab and reports the outcome to the dashboard.
+async function placeGarminMarker(tabId, source = '') {
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'ISOLATED',
+    func: gpsChartsGarminMarker
+  });
+  const outcome = result?.result || 'unavailable';
+  const messages = {
+    marked: 'Garmin marker placed at the vessel position.',
+    offset: 'Garmin placed its marker away from the vessel position. Click the map centre to move it.',
+    manual: 'Garmin is centred on the vessel. Click the map centre to place its marker.',
+    unavailable: 'Garmin was opened with the vessel position. When the map loads, click its centre to place the marker.'
+  };
+  // Deliberately no coordinates, geohashes, or complete provider URLs in logs/messages.
+  chrome.runtime.sendMessage({
+    type: 'PROVIDER_STATUS',
+    provider: 'garmin',
+    text: `${source}${messages[outcome] || messages.unavailable}`
+  }).catch(() => {});
+  return outcome;
+}
 
 let latestFix = null;
 let providerTabId = null;
@@ -249,7 +254,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return true;
 });
 
+// Garmin tabs that another program opened with ?gpscharts=pin (the OpenCPN plugin) get one
+// marker attempt too. The tab is remembered so Garmin's own URL rewrites do not repeat it.
+const pinnedGarminTabs = new Set();
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== 'complete' || tabId === providerTabId || pinnedGarminTabs.has(tabId)) return;
+  if (!GPS_PROVIDER_URLS.isGarminPinRequest(tab.url)) return;
+  pinnedGarminTabs.add(tabId);
+  placeGarminMarker(tabId, 'OpenCPN: ').catch(() => {});
+});
+
 chrome.tabs.onRemoved.addListener(tabId => {
+  pinnedGarminTabs.delete(tabId);
   if (tabId === providerTabId) {
     providerTabId = null;
     providerTabProvider = null;

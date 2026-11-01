@@ -329,6 +329,7 @@ After the page loads, the extension makes **one** attempt to click the map centr
 
 - Continuous follow and the provider update interval are disabled for Garmin, because loading a new geohash URL can remove the existing marker.
 - The web app can only open the centred page; it cannot control Garmin's marker in a cross-origin tab.
+- **From OpenCPN:** the OpenCPN Online Charts plugin opens Garmin in Chrome with `gpscharts=pin` added to the address. The extension makes the same single marker attempt and check on such a tab, once per tab, even though it did not open it. Only Garmin Marine pages with a geohash `key` qualify.
 - No routes or saved points are created, no cookie choice is made for you, and no Garmin credentials, cookies, tokens or internal application state are read.
 - The position is sent to Garmin in the URL only after your explicit open action. Extension logs and status messages do not include coordinates, geohashes or complete Garmin URLs.
 

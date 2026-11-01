@@ -59,6 +59,19 @@ for (const [lat, lon] of [
 assert.throws(() => providers.garmin(null), error => error.name === 'RangeError');
 assert.throws(() => providers.garmin({}), error => error.name === 'RangeError');
 
+// Garmin tabs opened by the OpenCPN plugin ask for the marker with ?gpscharts=pin.
+const pinUrl = `${providers.garmin(cowes)}&gpscharts=pin`;
+assert.equal(providers.isGarminPinRequest(pinUrl), true);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('/en-GB/marine/', '/marine/')), true);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('/en-GB/marine/', '/pt-PT/marine')), true);
+assert.equal(providers.isGarminPinRequest(providers.garmin(cowes)), false);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('gpscharts=pin', 'gpscharts=other')), false);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('https://maps.garmin.com', 'https://maps.garmin.com.example.org')), false);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('/en-GB/marine/', '/en-GB/fitness/')), false);
+assert.equal(providers.isGarminPinRequest(pinUrl.replace('key=gcp0f3ng66mj', 'key=NOT-A-HASH')), false);
+assert.equal(providers.isGarminPinRequest('not a url'), false);
+assert.equal(providers.isGarminPinRequest(undefined), false);
+
 // Existing providers retain their coordinate order and depth-unit behavior.
 assert.equal(providers.cmapPath(cowes), '/core/select/new_place/@-1.298000,50.762900');
 assert.ok(providers.iboating(cowes, 13.76, 'ft').includes('?depth=ft#13.76/50.762900/-1.298000'));

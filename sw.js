@@ -2,7 +2,7 @@
    internet. Chart tiles are not handled here: tilecache.js stores them in IndexedDB. */
 'use strict';
 
-const VERSION = 'gps-charts-0.7.0';
+const VERSION = 'gps-charts-0.7.1';
 const APP_FILES = [
   './',
   './dashboard.html',

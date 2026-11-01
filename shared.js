@@ -39,6 +39,18 @@ const GPS_PROVIDER_URLS = {
   GARMIN_ORIGIN: 'https://maps.garmin.com',
   // English page, like the dashboard (LOCALE in dashboard.js).
   GARMIN_URL: 'https://maps.garmin.com/en-GB/marine/',
+  // Added by other programs (the OpenCPN Online Charts plugin) that open Garmin in Chrome
+  // and want this extension to place Garmin's marker; Garmin keeps it in its URL.
+  GARMIN_PIN_PARAM: 'gpscharts',
+  isGarminPinRequest(url) {
+    try {
+      const parsed = new URL(url);
+      return parsed.origin === this.GARMIN_ORIGIN && /^\/[^/]+\/marine\/?$|^\/marine\/?$/.test(parsed.pathname) &&
+        parsed.searchParams.get(this.GARMIN_PIN_PARAM) === 'pin' && /^[0-9b-hjkmnp-z]{1,12}$/.test(parsed.searchParams.get('key') || '');
+    } catch (_) {
+      return false;
+    }
+  },
   iboatingHash: (fix, zoom) => `#${zoom}/${fix.lat.toFixed(6)}/${fix.lon.toFixed(6)}`,
   // ?depth=m|ft sets i-Boating's depth units (read by its apply_params_from_url).
   iboating(fix, zoom, units = 'm') {
