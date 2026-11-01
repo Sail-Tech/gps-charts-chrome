@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- **Garmin Marine provider:** opens Garmin's public Marine chart centred on the current or last known GPS position, encoded as a standard 12-character geohash, on Garmin's English page. Garmin is never opened at the demonstration fallback position.
+- **Garmin marker:** after the page loads, the extension clicks the map centre once and checks both that Garmin's own `pin-location` marker appears and that Garmin reports it within 500 m of the vessel. Otherwise the dashboard asks you to click the map centre. Follow, provider zoom and update interval are disabled for Garmin, because loading a new position would remove its marker.
+- **Privacy:** no coordinates, geohashes or complete Garmin URLs go into logs or status messages; no Garmin credentials, cookies, tokens or application state are read.
+- **Dashboard, popup and web app:** Garmin in the provider list and popup, with provider-specific help and status messages; the web app opens the centred page but cannot place the marker.
+- **Web app offline:** the service worker now also keeps `weather.js`, and its cache version follows the release.
+- **Tests:** geohash reference values, decode round trips, coordinate limits, invalid values and the Garmin URL.
+- **Wind barbs:** drawn to the standard convention. The staff points to where the wind comes from, with feathers at the far end on its right, slanting outwards: pennant 50 kn, full barb 10 kn, half barb 5 kn, and a double circle for calm. Feathers no longer get cut off at the edge of the symbol, and the wind-field barbs are slightly larger.
+
 ## 0.6.1
 
 - **Offline weather:** the conditions, the wind/wave field and the timeline now stay from cache when the network drops (the field is kept too), marked "offline". They refresh when the connection returns and every few hours otherwise. Fixes the field being cleared and its cache overwritten while offline.

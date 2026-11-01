@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header><img src="icons/icon48.png" alt=""><div><strong>GPS Charts</strong><span>NMEA → C-MAP / i-Boating</span></div></header>
+  <header><img src="icons/icon48.png" alt=""><div><strong>GPS Charts</strong><span>NMEA → C-MAP / i-Boating / Garmin</span></div></header>
   <main>
     <div class="status"><span id="dot" class="dot"></span><span id="status">Checking status…</span></div>
     <div class="coordinates"><strong id="position">No GPS position</strong><span id="motion">Open the dashboard to connect a source.</span></div>
@@ -15,6 +15,7 @@
     <div class="providers">
       <button data-provider="iboating">Open i-Boating</button>
       <button data-provider="cmap">Open C-MAP</button>
+      <button data-provider="garmin">Open Garmin Marine</button>
     </div>
     <label><input id="follow" type="checkbox" checked> Update the provider from the GPS</label>
     <p>Keep the dashboard open while using the serial port or the WebSocket.</p>

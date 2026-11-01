@@ -344,7 +344,7 @@ function renderField(points) {
   for (const point of points) {
     let html = '';
     if (config.windFieldEnabled && point.windSpeed !== null && point.windSpeed !== undefined) {
-      html += Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 46, width: 1.6 });
+      html += Weather.windBarbSvg(point.windSpeed, point.windDir, { size: 56, width: 1.6 });
     }
     if (config.waveFieldEnabled && point.waveHeight !== null && point.waveHeight !== undefined) {
       html += Weather.waveArrowSvg(point.waveHeight, point.waveDir, { size: 34 });
@@ -643,6 +643,34 @@ async function prefetchVisibleArea() {
 
 /* ---------- Settings ---------- */
 
+function validProviderFix(fix) {
+  return fix && Number.isFinite(fix.lat) && Number.isFinite(fix.lon) &&
+    fix.lat >= -90 && fix.lat <= 90 && fix.lon >= -180 && fix.lon <= 180;
+}
+
+function providerName(provider) {
+  return provider === 'garmin' ? 'Garmin Marine' : provider === 'cmap' ? 'C-MAP' : 'i-Boating';
+}
+
+function updateProviderUi() {
+  const provider = $('provider').value;
+  const garmin = provider === 'garmin';
+  $('zoom').disabled = garmin;
+  $('autoCenterProvider').disabled = garmin;
+  $('updateSeconds').disabled = garmin;
+  if (garmin) {
+    $('providerHint').textContent = GPSPlatform.isExtension
+      ? 'Garmin opens at the vessel position and tries once to place its native marker. Click the map centre if the marker is not shown. Continuous follow is off to avoid reloads. The position is sent to Garmin in the URL only when you open it.'
+      : 'Opens Garmin at the current position in a new tab. Click the map centre if the marker is not shown. The position is sent to Garmin in the URL. Following and marker control need the Chrome extension.';
+  } else if (!GPSPlatform.isExtension) {
+    $('providerHint').textContent = `Opens ${providerName(provider)} in a new tab at the current position. Following the boat on provider sites needs the Chrome extension on a computer.`;
+  } else if (provider === 'cmap') {
+    $('providerHint').textContent = 'C-MAP shows the boat as a Pinned location. It resets its zoom on each update and ignores the URL zoom; a longer interval leaves time to zoom in between.';
+  } else {
+    $('providerHint').textContent = 'i-Boating draws its own boat marker with a heading line and keeps your zoom. With auto-centre off the marker still moves but the chart stays put.';
+  }
+}
+
 function updateModeRows() {
   const mode = $('connectionMode').value;
   $('wsRow').classList.toggle('hidden', mode !== 'websocket');
@@ -667,6 +695,7 @@ async function saveSetting(id) {
   else value = $(id).value;
   const changed = config[id] !== value;
   config[id] = value;
+  if (id === 'provider') updateProviderUi();
   await GPSPlatform.storage.set({ [id]: value });
   if (id === 'depthUnits' && changed) {
     GPSBathymetry.applyUnits(map, config);
@@ -1069,6 +1098,8 @@ async function initialize() {
   if (!$('connectionMode').value) $('connectionMode').selectedIndex = 0;
   $('baseChart').value = baseChartKey();
   if (!GPSPlatform.isExtension) setupWebApp();
+  updateProviderUi();
+  GPSPlatform.listen(message => log(message.text));
   await setupMenus();
   TileCache.install(maplibregl);
   TileCache.configure(config);
@@ -1133,17 +1164,26 @@ async function initialize() {
     log('Test position applied in the Solent, off Cowes.');
   });
   $('openProvider').addEventListener('click', async () => {
+    const provider = $('provider').value;
+    if (provider === 'garmin' && !validProviderFix(lastFix)) {
+      log('Garmin needs a valid current or last known GPS position; no demonstration position is used.');
+      return;
+    }
     if (!GPSPlatform.isExtension) {
       // Opened straight away, while the tap still counts as a user action for the pop-up blocker.
-      GPSPlatform.openProviderPage($('provider').value, lastFix || DEFAULT_FIX, Number($('zoom').value) || 13.76, config.depthUnits);
+      GPSPlatform.openProviderPage(provider, lastFix || DEFAULT_FIX, Number($('zoom').value) || 13.76, config.depthUnits);
       await Promise.all(SETTING_IDS.map(saveSetting));
-      log(`${config.provider === 'cmap' ? 'C-MAP' : 'i-Boating'} opened at the boat's position.`);
+      log(`${providerName(provider)} opened at the boat's position.${provider === 'garmin' ? ' Click the map centre if its marker is not shown.' : ''}`);
       return;
     }
     await Promise.all(SETTING_IDS.map(saveSetting));
-    const response = await GPSPlatform.send({ type: 'OPEN_PROVIDER', provider: config.provider, follow: config.autoCenterProvider });
+    const response = await GPSPlatform.send({
+      type: 'OPEN_PROVIDER',
+      provider: config.provider,
+      follow: config.provider === 'garmin' ? false : config.autoCenterProvider
+    });
     if (!response?.ok) log(response?.error || 'Could not open the provider.');
-    else log(`${config.provider === 'cmap' ? 'C-MAP' : 'i-Boating'} opened.`);
+    else log(`${providerName(config.provider)} opened at the vessel position.${config.provider === 'garmin' ? ' Waiting for the native marker check…' : ''}`);
   });
   $('applyTiles').addEventListener('click', async () => {
     const url = $('tileUrl').value.trim();

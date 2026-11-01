@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "GPS NMEA → C-MAP & i-Boating Charts",
+  "name": "GPS NMEA → C-MAP, i-Boating & Garmin Charts",
   "short_name": "GPS Charts",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Receives GPS data and shows charts, depth contours and soundings in its own dashboard or on the chart providers' sites.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "storage", "scripting", "unlimitedStorage"],
@@ -12,6 +12,7 @@
     "https://www.c-map.com/*",
     "https://maps.navico.com/*",
     "https://fishing-app.gpsnauticalcharts.com/*",
+    "https://maps.garmin.com/*",
     "https://tile.openstreetmap.org/*",
     "https://server.arcgisonline.com/*",
     "https://tiles.openseamap.org/*",

@@ -1,9 +1,9 @@
 'use strict';
 
-importScripts('shared.js');
+importScripts('shared.js', 'garmin-content.js');
 
 const DEFAULTS = GPS_DEFAULTS;
-const { CMAP_ORIGIN, IBOATING_URL } = GPS_PROVIDER_URLS;
+const { CMAP_ORIGIN, IBOATING_URL, GARMIN_ORIGIN } = GPS_PROVIDER_URLS;
 
 // Runs inside the C-MAP page (main world). C-MAP is a React single-page app: replacing its
 // "Pin location" route and firing popstate moves the pin and recentres the chart without a reload.
@@ -82,11 +82,46 @@ const PROVIDERS = {
       });
       return result?.result === true;
     }
+  },
+  garmin: {
+    name: 'Garmin Marine',
+    // Reloading a new geohash URL can remove Garmin's location marker.
+    supportsFollow: false,
+    build: fix => GPS_PROVIDER_URLS.garmin(fix),
+    async move(tabId) {
+      const tab = await chrome.tabs.get(tabId);
+      if (!tab.url?.startsWith(`${GARMIN_ORIGIN}/`) || tab.status !== 'complete') return false;
+      // One attempt per open: Garmin rewrites its URL as the map moves, which can report
+      // the tab as loaded again.
+      if (!garminMarkerPending) return false;
+      garminMarkerPending = false;
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'ISOLATED',
+        func: gpsChartsGarminMarker
+      });
+      const outcome = result?.result || 'unavailable';
+      const messages = {
+        marked: 'Garmin marker placed at the vessel position.',
+        offset: 'Garmin placed its marker away from the vessel position. Click the map centre to move it.',
+        manual: 'Garmin is centred on the vessel. Click the map centre to place its marker.',
+        unavailable: 'Garmin was opened with the vessel position. When the map loads, click its centre to place the marker.'
+      };
+      // Deliberately no coordinates, geohashes, or complete provider URLs in logs/messages.
+      chrome.runtime.sendMessage({
+        type: 'PROVIDER_STATUS',
+        provider: 'garmin',
+        text: messages[outcome] || messages.unavailable
+      }).catch(() => {});
+      return outcome === 'marked';
+    }
   }
 };
 
 let latestFix = null;
 let providerTabId = null;
+let providerTabProvider = null;
+let garminMarkerPending = false;
 let providerAutoCenter = true;
 let lastProviderUpdate = 0;
 let lastProviderPosition = null;
@@ -122,6 +157,8 @@ async function openProvider(provider, fix, zoom, units, force = false) {
     const tab = await chrome.tabs.create({ url, active: true });
     providerTabId = tab.id;
   }
+  providerTabProvider = provider;
+  garminMarkerPending = provider === 'garmin';
   lastProviderUpdate = Date.now();
   lastProviderPosition = { lat: fix.lat, lon: fix.lon, zoom };
   await chrome.storage.local.set({ provider, zoom });
@@ -131,7 +168,7 @@ async function openProvider(provider, fix, zoom, units, force = false) {
 async function followProvider(fix, force = false) {
   if (providerTabId === null) return;
   const config = await settings();
-  const provider = PROVIDERS[config.provider];
+  const provider = PROVIDERS[providerTabProvider || config.provider];
   if (!provider?.supportsFollow) return;
   if (!providerAutoCenter && !provider.markerWithoutCenter) return;
   if (!fix || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon)) return;
@@ -173,10 +210,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ ok: true });
     } else if (message.type === 'OPEN_PROVIDER') {
       const config = await settings();
-      const fix = latestFix || config.latestFix || { lat: 50.775, lon: -1.3 };
       const provider = message.provider || config.provider;
-      providerAutoCenter = message.follow ?? config.autoCenterProvider;
-      await chrome.storage.local.set({ autoCenterProvider: providerAutoCenter });
+      const savedFix = latestFix || config.latestFix;
+      // Never send an invented position to Garmin; other providers retain their demo fallback.
+      if (provider === 'garmin' && !savedFix) throw new Error('No GPS position is available for Garmin.');
+      const fix = savedFix || { lat: 50.775, lon: -1.3 };
+      providerAutoCenter = provider === 'garmin' ? false : (message.follow ?? config.autoCenterProvider);
+      await chrome.storage.local.set({
+        autoCenterProvider: provider === 'garmin' ? config.autoCenterProvider : providerAutoCenter
+      });
       const tabId = await openProvider(provider, fix, config.zoom, config.depthUnits, true);
       sendResponse({ ok: true, tabId });
     } else if (message.type === 'GET_STATUS') {
@@ -208,7 +250,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 chrome.tabs.onRemoved.addListener(tabId => {
-  if (tabId === providerTabId) providerTabId = null;
+  if (tabId === providerTabId) {
+    providerTabId = null;
+    providerTabProvider = null;
+    garminMarkerPending = false;
+  }
 });
 
 // Place the boat on the provider chart as soon as its page finishes loading, even when stationary.
@@ -216,7 +262,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (tabId !== providerTabId || changeInfo.status !== 'complete') return;
   (async () => {
     const config = await settings();
-    const provider = PROVIDERS[config.provider];
+    const provider = PROVIDERS[providerTabProvider || config.provider];
     const fix = latestFix || config.latestFix;
     if (!provider?.move || !fix || !Number.isFinite(fix.lat)) return;
     await provider.move(tabId, fix, { center: providerAutoCenter, zoom: config.zoom, zoomChanged: false, redraw: true });

@@ -10,6 +10,9 @@ const GPSPlatform = (() => {
       isExtension,
       storage: chrome.storage.local,
       send: message => chrome.runtime.sendMessage(message),
+      listen: callback => chrome.runtime.onMessage.addListener(message => {
+        if (message.type === 'PROVIDER_STATUS') callback(message);
+      }),
       url: path => chrome.runtime.getURL(path)
     };
   }
@@ -47,7 +50,10 @@ const GPSPlatform = (() => {
 
   // Opens the provider at the boat's position in a new tab. Following the boat there needs the extension.
   function openProviderPage(provider, fix, zoom, units) {
-    const url = provider === 'cmap' ? GPS_PROVIDER_URLS.cmap(fix) : GPS_PROVIDER_URLS.iboating(fix, zoom, units);
+    let url;
+    if (provider === 'garmin') url = GPS_PROVIDER_URLS.garmin(fix);
+    else if (provider === 'cmap') url = GPS_PROVIDER_URLS.cmap(fix);
+    else url = GPS_PROVIDER_URLS.iboating(fix, zoom, units);
     window.open(url, '_blank', 'noopener');
   }
 
@@ -62,6 +68,7 @@ const GPSPlatform = (() => {
     isExtension,
     storage,
     send,
+    listen: () => {},
     url: path => new URL(path, document.baseURI).href,
     openProviderPage
   };

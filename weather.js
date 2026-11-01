@@ -91,8 +91,11 @@
     return distanceMeters(previous.lat, previous.lon, lat, lon) >= minMoveMeters;
   }
 
-  // A maritime wind barb (knots): the staff points towards the direction the wind comes FROM, half
-  // barbs are 5 kn, full barbs 10 kn and pennants 50 kn. Returns a self-contained SVG string.
+  // A standard wind barb (knots). The staff starts at the position and points to where the wind comes
+  // FROM. Feathers sit at the far end, on the right of the staff looking outwards, slanting outwards: a
+  // pennant (filled triangle) is 50 kn, a full barb 10 kn and a half barb 5 kn, ordered pennants, full
+  // barbs, half barbs from the tip inwards; a lone half barb sits one step in. Calm is a double circle.
+  // Returns a self-contained SVG string.
   function windBarbSvg(speedKn, dirDeg, opts = {}) {
     const size = opts.size || 64;
     const color = opts.color || '#073b55';
@@ -102,33 +105,40 @@
     const header = `<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" xmlns="http://www.w3.org/2000/svg">`;
     const speed = number(speedKn);
     if (speed === null) return `${header}</svg>`;
-    // Calm (under 2.5 kn rounds to nothing): the standard open circle.
+    // Calm (under 2.5 kn rounds to nothing): the standard double circle.
     if (speed < 2.5) {
-      return `${header}<circle cx="${cx}" cy="${cy}" r="${(size * 0.1).toFixed(1)}" fill="none" stroke="${color}" stroke-width="${sw}"/></svg>`;
+      return `${header}<circle cx="${cx}" cy="${cy}" r="${(size * 0.07).toFixed(1)}" fill="none" stroke="${color}" stroke-width="${sw}"/>` +
+        `<circle cx="${cx}" cy="${cy}" r="${(size * 0.13).toFixed(1)}" fill="none" stroke="${color}" stroke-width="${sw}"/></svg>`;
     }
     const dir = (((Number(dirDeg) || 0) % 360) + 360) % 360;
+    // The station is the centre of the box, so staff plus the feathers' outward slant stays inside it.
     const staffLen = size * 0.34;
-    const barbLen = size * 0.22;
-    const bx = -barbLen * 0.9;      // barbs reach to the left of the staff
-    const by = -barbLen * 0.45;     // and slant towards the tip
-    const step = size * 0.085;      // spacing between symbols
+    const feather = size * 0.2;      // full barb length
+    const across = feather * 0.87;   // 60 degrees from the staff, to its right...
+    const out = feather * 0.5;       // ...slanting towards the tip
+    const step = size * 0.06;        // spacing between feathers
+    const pennant = size * 0.09;     // pennant base along the staff
     const tipY = -staffLen;
     let remaining = Math.round(speed / 5) * 5;
-    const parts = [`<line x1="0" y1="0" x2="0" y2="${tipY.toFixed(1)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`];
+    const f = v => v.toFixed(1);
+    const parts = [`<line x1="0" y1="0" x2="0" y2="${f(tipY)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`];
     let pos = tipY;
+    let any = false;
     while (remaining >= 50) {
-      parts.push(`<polygon points="0,${pos.toFixed(1)} ${bx.toFixed(1)},${(pos + by).toFixed(1)} 0,${(pos + step).toFixed(1)}" fill="${color}"/>`);
-      pos += step * 1.2;
+      parts.push(`<polygon points="0,${f(pos)} ${f(across)},${f(pos)} 0,${f(pos + pennant)}" fill="${color}"/>`);
+      pos += pennant + step * 0.4;
       remaining -= 50;
+      any = true;
     }
     while (remaining >= 10) {
-      parts.push(`<line x1="0" y1="${pos.toFixed(1)}" x2="${bx.toFixed(1)}" y2="${(pos + by).toFixed(1)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
+      parts.push(`<line x1="0" y1="${f(pos)}" x2="${f(across)}" y2="${f(pos - out)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
       pos += step;
       remaining -= 10;
+      any = true;
     }
     if (remaining >= 5) {
-      if (pos === tipY) pos += step;   // a lone half barb sits one step in from the tip
-      parts.push(`<line x1="0" y1="${pos.toFixed(1)}" x2="${(bx * 0.5).toFixed(1)}" y2="${(pos + by * 0.5).toFixed(1)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
+      if (!any) pos += step;   // a lone half barb sits one step in from the tip
+      parts.push(`<line x1="0" y1="${f(pos)}" x2="${f(across * 0.5)}" y2="${f(pos - out * 0.5)}" stroke="${color}" stroke-width="${sw}" stroke-linecap="round"/>`);
     }
     return `${header}<g transform="translate(${cx},${cy}) rotate(${dir.toFixed(0)})">${parts.join('')}</g></svg>`;
   }

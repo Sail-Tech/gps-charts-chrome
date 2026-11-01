@@ -36,6 +36,9 @@ const GPS_DEFAULTS = {
 const GPS_PROVIDER_URLS = {
   CMAP_ORIGIN: 'https://appchart.c-map.com',
   IBOATING_URL: 'https://fishing-app.gpsnauticalcharts.com/i-boating-fishing-web-app/fishing-marine-charts-navigation.html',
+  GARMIN_ORIGIN: 'https://maps.garmin.com',
+  // English page, like the dashboard (LOCALE in dashboard.js).
+  GARMIN_URL: 'https://maps.garmin.com/en-GB/marine/',
   iboatingHash: (fix, zoom) => `#${zoom}/${fix.lat.toFixed(6)}/${fix.lon.toFixed(6)}`,
   // ?depth=m|ft sets i-Boating's depth units (read by its apply_params_from_url).
   iboating(fix, zoom, units = 'm') {
@@ -45,5 +48,43 @@ const GPS_PROVIDER_URLS = {
   cmapPath: fix => `/core/select/new_place/@${fix.lon.toFixed(6)},${fix.lat.toFixed(6)}`,
   cmap(fix) {
     return this.CMAP_ORIGIN + this.cmapPath(fix);
+  },
+  geohash(latitude, longitude, precision = 12) {
+    const alphabet = '0123456789bcdefghjkmnpqrstuvwxyz';
+    if (latitude === null || longitude === null || latitude === '' || longitude === '' ||
+        typeof latitude === 'boolean' || typeof longitude === 'boolean') {
+      throw new RangeError('No valid GPS position is available.');
+    }
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) ||
+        lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      throw new RangeError('No valid GPS position is available.');
+    }
+    let latMin = -90, latMax = 90, lonMin = -180, lonMax = 180;
+    let even = true, bit = 0, value = 0, result = '';
+    while (result.length < precision) {
+      if (even) {
+        const middle = (lonMin + lonMax) / 2;
+        if (lon >= middle) { value = value * 2 + 1; lonMin = middle; }
+        else { value *= 2; lonMax = middle; }
+      } else {
+        const middle = (latMin + latMax) / 2;
+        if (lat >= middle) { value = value * 2 + 1; latMin = middle; }
+        else { value *= 2; latMax = middle; }
+      }
+      even = !even;
+      if (++bit === 5) {
+        result += alphabet[value];
+        bit = 0;
+        value = 0;
+      }
+    }
+    return result;
+  },
+  // Garmin decodes the public key query parameter as a geohash and centres its map there.
+  garmin(fix) {
+    const key = this.geohash(fix?.lat, fix?.lon, 12);
+    return `${this.GARMIN_URL}?maps=another-brand&overlay=false&key=${key}`;
   }
 };

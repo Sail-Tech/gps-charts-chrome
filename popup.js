@@ -25,12 +25,21 @@ document.getElementById('dashboard').addEventListener('click', async () => {
 
 document.querySelectorAll('[data-provider]').forEach(button => {
   button.addEventListener('click', async () => {
-    await chrome.runtime.sendMessage({
-      type: 'OPEN_PROVIDER',
-      provider: button.dataset.provider,
-      follow: document.getElementById('follow').checked
-    });
-    window.close();
+    const provider = button.dataset.provider;
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'OPEN_PROVIDER',
+        provider,
+        follow: provider === 'garmin' ? false : document.getElementById('follow').checked
+      });
+      if (!response?.ok) {
+        document.getElementById('status').textContent = response?.error || 'Could not open the provider';
+        return;
+      }
+      window.close();
+    } catch (error) {
+      document.getElementById('status').textContent = error.message || 'Could not open the provider';
+    }
   });
 });
 

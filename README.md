@@ -1,6 +1,6 @@
 # GPS Charts for Chrome
 
-Chrome extension (Manifest V3) that takes your boat's GPS position (NMEA 0183, JSON or Signal K over a serial port, WebSocket, TCP or UDP) and shows it on its own chart dashboard, on [i-Boating](https://fishing-app.gpsnauticalcharts.com/i-boating-fishing-web-app/fishing-marine-charts-navigation.html) or on [C-MAP Chart Explorer](https://appchart.c-map.com/core/map).
+Chrome extension (Manifest V3) that takes your boat's GPS position (NMEA 0183, JSON or Signal K over a serial port, WebSocket, TCP or UDP) and shows it on its own chart dashboard, on [i-Boating](https://fishing-app.gpsnauticalcharts.com/i-boating-fishing-web-app/fishing-marine-charts-navigation.html), on [C-MAP Chart Explorer](https://appchart.c-map.com/core/map) or on [Garmin Marine](https://maps.garmin.com/en-GB/marine/).
 
 The same dashboard also runs as a **web app for iPhone and Android** at **<https://sail-tech.github.io/gps-charts-chrome/>**, using the phone's own GPS (see [Web app for phones and tablets](#web-app-for-phones-and-tablets)).
 
@@ -13,6 +13,7 @@ The same dashboard also runs as a **web app for iPhone and Android** at **<https
 - **Serial ports**: a list of authorised ports with USB adapter names, and **Scan ports**, which finds the port and baud rate that send NMEA.
 - **i-Boating**: the boat appears as i-Boating's own marker with a heading line and moves without reloading the page, keeping your zoom.
 - **C-MAP**: the boat appears as a *Pinned location* that moves with the GPS without reloading the page.
+- **Garmin Marine**: opens centred on a 12-character geohash of the GPS position. The extension tries once to place Garmin's native marker; if it does not appear, click the map centre.
 - **Collapsible menus** so the chart can use the whole window.
 - **Web app (PWA)** for iPhone, iPad and Android: installable from the browser, works offline, uses the device's GPS.
 
@@ -42,6 +43,7 @@ To update later, replace the folder's files (or `git pull`), then click the relo
 - **Offline cache** for every chart tile viewed (base chart, seamarks, bathymetry and label fonts), with size limit, refresh age, three modes and **Save visible area for offline use**.
 - i-Boating opened at the boat position, with its own boat marker and heading line moved as the GPS updates, keeping your zoom.
 - C-MAP opened at the boat position as a *Pinned location*, with the pin moved as the GPS updates.
+- Garmin Marine opened at the boat position through a 12-character geohash, with a single native-marker attempt and a manual-click fallback.
 
 ## Web app for phones and tablets
 
@@ -69,6 +71,7 @@ Starting it from the home screen opens it full screen, and the browser keeps its
 | GPS sources | WebSocket, serial port, device location | Device GPS; WebSocket only to secure `wss://` addresses; serial port only on Android (Bluetooth) |
 | Chart, bathymetry, metres/feet, offline cache | Yes | Yes |
 | i-Boating and C-MAP | Opened and followed (marker / pin moves with the GPS) | Opened at the boat's position in a new tab; not followed |
+| Garmin Marine | Opened at the boat's position; one native-marker attempt, then manual-click fallback | Opened at the boat's position; click the map centre if no marker appears |
 | Works without internet | Yes, from the cache | Yes: the app itself is kept by a service worker, the chart by the cache |
 
 Notes:
@@ -266,7 +269,7 @@ Esri World Ocean Base tiles are cached as you view them but are not bulk-downloa
 
 **"Access blocked · 403" tiles.** OpenStreetMap's servers sometimes answer with an image saying *Access blocked — App is not following the tile usage policy* ([osm.wiki/Blocked](https://wiki.openstreetmap.org/wiki/Blocked)) in place of the map tile. The dashboard recognises that image (the yellow and black stripe on its left edge) and does not draw it: that square stays empty, the bathymetry and seamarks still show, the footer says some tiles were refused, and the cache usage line counts them. The extension does not disguise its requests to get around the block; if many tiles are refused, choose **Esri World Ocean Base**. Installations still on the old OpenStreetMap default are moved to Esri automatically when the extension updates.
 
-The cache covers only the extension's dashboard. The C-MAP and i-Boating websites need an internet connection.
+The cache covers only the extension's dashboard. The C-MAP, i-Boating and Garmin websites need an internet connection.
 
 ### Weather forecast
 
@@ -312,19 +315,37 @@ Tested behaviour (October 2026):
 
 This route is not a documented C-MAP API and may change without notice. If C-MAP stops honouring it, the tab still opens, but the pin no longer follows the boat.
 
+### Garmin Marine
+
+Select **Garmin Marine** and click **Open / centre provider**. A valid current or last known GPS position is required; Garmin never receives the demonstration fallback. The extension converts the unrounded latitude and longitude to a standard 12-character geohash and opens:
+
+```text
+https://maps.garmin.com/en-GB/marine/?maps=another-brand&overlay=false&key=<12-character-geohash>
+```
+
+Garmin decodes `key` and centres its map on that position. The page opens in English, like the dashboard. The `key` is a location encoding, not an authentication token; `maps=another-brand` only selects Garmin's chart-product list for non-Garmin chartplotters.
+
+After the page loads, the extension makes **one** attempt to click the map centre through its public DOM and waits up to eight seconds for Garmin's native `pin-location` marker. Garmin then rewrites `key` with the marker position, and the extension compares it with the requested geohash: it reports success only when the marker is present and within 500 m of the vessel. Otherwise (no marker, or the map moved before the click, for example while a cookie banner was answered) it asks you to **click the map centre yourself**. At Garmin's opening zoom one screen pixel is about 100 m, so the marker is placed to within a few hundred metres; zoom in and click again for a closer position. Tested in Chrome on Garmin's English page.
+
+- Continuous follow and the provider update interval are disabled for Garmin, because loading a new geohash URL can remove the existing marker.
+- The web app can only open the centred page; it cannot control Garmin's marker in a cross-origin tab.
+- No routes or saved points are created, no cookie choice is made for you, and no Garmin credentials, cookies, tokens or internal application state are read.
+- The position is sent to Garmin in the URL only after your explicit open action. Extension logs and status messages do not include coordinates, geohashes or complete Garmin URLs.
+
 ## Security
 
 - The bridge WebSocket listens only on `127.0.0.1` by default.
 - Do not expose that WebSocket directly to the internet or an untrusted network: the bridge has no authentication.
 - Opening UDP or TCP on `0.0.0.0` accepts data from devices on the network; apply suitable firewall rules.
-- The `scripting` permission is used only in the provider tab opened by the extension: on `appchart.c-map.com` to change its route, and on i-Boating to send its boat-position message.
+- The `scripting` permission is used only in the provider tab opened by the extension: on `appchart.c-map.com` to change its route, on i-Boating to send its boat-position message, and on `maps.garmin.com` for the single marker attempt and native-marker check.
 - External pages are subject to the providers' accounts, licences, cookies and terms.
 
 ## Structure
 
 ```text
 manifest.json                 Manifest V3 configuration (extension)
-background.js                 GPS state and provider tabs (i-Boating boat marker, C-MAP pin)
+background.js                 GPS state and provider tabs (i-Boating, C-MAP and Garmin)
+garmin-content.js             Single Garmin marker attempt and native-marker verification
 dashboard.html/css/js         Dashboard, connections, map and settings (extension page and web app)
 shared.js                     Settings defaults and provider URLs (extension and web app)
 platform.js                   Storage/messaging layer: chrome.* in the extension, localStorage in the web app
@@ -343,12 +364,13 @@ icons/                        Extension and web app icons (icon.svg is the sourc
 tests/nmea.test.js            Parser tests
 tests/tilecache.test.js       Cache maths, prefetch planning and serial helper tests
 tests/weather.test.js         Weather module tests
+tests/provider.test.js        Provider URLs and 12-character Garmin geohash tests
 ```
 
 To run the tests:
 
 ```bash
-node tests/nmea.test.js && node tests/tilecache.test.js && node tests/weather.test.js
+for test in tests/*.test.js; do node "$test" || exit 1; done
 ```
 
 ## Navigation warning
@@ -357,4 +379,4 @@ Experimental project. Do not use as a primary source of navigation or as a subst
 
 ## Licence
 
-The extension's code is released under the [MIT licence](LICENSE). The bundled MapLibre GL JS in `vendor/` keeps its own BSD 3-Clause licence ([vendor/LICENSE.txt](vendor/LICENSE.txt)). Chart and bathymetry data shown by the extension (Esri, OpenStreetMap, OpenSeaMap, Open Waters, C-MAP, i-Boating) are not covered by this licence and remain under their providers' own terms.
+The extension's code is released under the [MIT licence](LICENSE). The bundled MapLibre GL JS in `vendor/` keeps its own BSD 3-Clause licence ([vendor/LICENSE.txt](vendor/LICENSE.txt)). Chart and bathymetry data shown by the extension (Esri, OpenStreetMap, OpenSeaMap, Open Waters, C-MAP, i-Boating, Garmin) are not covered by this licence and remain under their providers' own terms.
