@@ -24,8 +24,9 @@ TileCache.configure({ cacheEnabled: true });
 assert.equal(TileCache.wrap('https://a/{z}'), 'cached://https://a/{z}');
 assert.equal(TileCache.wrap(TileCache.wrap('https://a/{z}')), 'cached://https://a/{z}');
 assert.equal(TileCache.unwrap('cached://https://a/1'), 'https://a/1');
+// With the cache off the URL is the same: the protocol fetches from the network without storing.
 TileCache.configure({ cacheEnabled: false });
-assert.equal(TileCache.wrap('https://a/{z}'), 'https://a/{z}');
+assert.equal(TileCache.wrap('https://a/{z}'), 'cached://https://a/{z}');
 TileCache.configure({ cacheEnabled: true });
 
 // OpenStreetMap's servers do not allow offline use: their tiles never go through the cache.

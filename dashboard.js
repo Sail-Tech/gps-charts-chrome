@@ -1027,19 +1027,10 @@ class BrightnessControl {
 
 /* ---------- Map ---------- */
 
+// Created once: removing a map makes Chrome log "CONTEXT_LOST_WEBGL: loseContext" as an extension error.
 function initializeMap() {
   maplibregl.setWorkerUrl(GPSPlatform.url('vendor/maplibre-gl-csp-worker.js'));
   TileCache.configure(config);
-  if (map) {
-    map.remove();
-    map = null;
-    boatMarker = null;
-    windMarker = null;
-    currentMarker = null;
-    infoPopup = null;
-    infoSticky = false;
-    mapReady = false;
-  }
   const wrap = TileCache.wrap;
   const center = lastFix || DEFAULT_FIX;
   map = new maplibregl.Map({
@@ -1049,14 +1040,7 @@ function initializeMap() {
       glyphs: wrap(GLYPHS_URL),
       sources: {
         ...GPSBathymetry.sources(wrap),
-        chart: {
-          type: 'raster',
-          tiles: [wrap(config.tileUrl)],
-          tileSize: 256,
-          minzoom: Number(config.tileMinZoom),
-          maxzoom: Number(config.tileMaxZoom),
-          attribution: config.attribution
-        },
+        chart: chartSource(),
         seamarks: {
           type: 'raster',
           tiles: [wrap(SEAMARKS_URL)],
@@ -1135,6 +1119,32 @@ function updateDepthSource() {
     }
   }
   if ($('depthSource').textContent !== text) $('depthSource').textContent = text;
+}
+
+function chartSource() {
+  return {
+    type: 'raster',
+    tiles: [TileCache.wrap(config.tileUrl)],
+    tileSize: 256,
+    minzoom: Number(config.tileMinZoom),
+    maxzoom: Number(config.tileMaxZoom),
+    attribution: config.attribution
+  };
+}
+
+/* Swaps the base chart in place, below the depth layers. */
+function replaceChartSource() {
+  if (!map) return;
+  if (!mapReady) {
+    map.once('style.load', replaceChartSource);
+    return;
+  }
+  const layers = map.getStyle().layers;
+  const above = layers[layers.findIndex(layer => layer.id === 'chart') + 1]?.id;
+  map.removeLayer('chart');
+  map.removeSource('chart');
+  map.addSource('chart', chartSource());
+  map.addLayer({ id: 'chart', type: 'raster', source: 'chart' }, above);
 }
 
 // The follow zoom is not limited by the chart's max zoom: MapLibre enlarges the deepest tiles beyond it.
@@ -1340,7 +1350,6 @@ async function saveSetting(id) {
     TileCache.configure(config);
     updateNetworkState();
     if (id === 'cacheEnabled') {
-      initializeMap();
       log(value ? 'Offline cache enabled.' : 'Offline cache disabled; stored tiles are kept.');
     } else if (id === 'cacheMode') {
       log(`Cache mode: ${$('cacheMode').selectedOptions[0].textContent}.`);
@@ -1371,7 +1380,7 @@ async function applyChartSource(source) {
   await GPSPlatform.storage.set(values);
   $('baseChart').value = baseChartKey();
   updateBaseChartUi();
-  initializeMap();
+  replaceChartSource();
 }
 
 /* ---------- Menus ---------- */

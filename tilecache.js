@@ -71,10 +71,10 @@
     return !NO_CACHE_HOSTS.some(blocked => host === blocked || host.endsWith(`.${blocked}`));
   }
 
+  // Every source goes through the protocol, even with the cache off, so turning the cache on or off
+  // does not need a new map (load decides), and OpenStreetMap's blocked-access images are filtered.
   function wrap(url) {
     if (typeof url !== 'string' || url.startsWith(PREFIX)) return url;
-    // Non-cacheable sources always go through the protocol so blocked-access images can be filtered.
-    if (!settings.enabled && cacheable(url)) return url;
     return PREFIX + url;
   }
 
@@ -200,7 +200,7 @@
   /* ---------- Network ---------- */
 
   function isOffline() {
-    return settings.mode === 'offline' || (typeof navigator !== 'undefined' && navigator.onLine === false);
+    return (settings.enabled && settings.mode === 'offline') || (typeof navigator !== 'undefined' && navigator.onLine === false);
   }
 
   async function fetchNetwork(url, signal, cache = 'default') {
@@ -291,7 +291,7 @@
 
   async function load(params, abortController) {
     const url = unwrap(params.url);
-    if (!cacheable(url)) return loadUncached(url, params, abortController);
+    if (!settings.enabled || !cacheable(url)) return loadUncached(url, params, abortController);
     const entry = await read(url).catch(() => null);
     const fresh = entry && Date.now() - entry.time < settings.maxAgeMs;
     if (entry && (isOffline() || (settings.mode === 'cache' && fresh))) {

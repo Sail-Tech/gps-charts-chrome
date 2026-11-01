@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- **No more "CONTEXT_LOST_WEBGL" error:** changing the base chart or turning the offline cache on or off rebuilt the dashboard's chart, and Chrome listed the old chart's release of its graphics context as an extension error (*WebGL: CONTEXT_LOST_WEBGL: loseContext: context lost*). It was harmless, but the chart is now kept: the base chart is swapped in place, and every source always goes through the cache layer, which simply skips storing when the cache is off. The chart also keeps its position, boat and track.
+
 ## 0.12.0
 
 Brings the depth chart in line with the current [Open Waters Seascape viewer](https://openwaters.io/charts/seascape/viewer/).
