@@ -1,9 +1,13 @@
 # Changelog
 
+## 0.13.1
+
+- **Centre button clear of the time bar on phones:** the target button at the bottom right was partly hidden by the forecast time bar on a phone. It now sits clear above the bar, whether the map credits are expanded or not and with the phone's home indicator.
+
 ## 0.13.0
 
 - **AIS demo with live vessels:** **AIS demo** now shows real vessels in the chart view from [Open Waters AIS](https://openwaters.io/ais/), an open AIS network that needs no account or key. The subscription follows the chart, narrowed to the service's 100 square degrees; the last known reports in the area appear at once, then live traffic. Reports keep their receive time, so ones relayed late are drawn faded and never move a vessel back, and the credit each source's licence asks for is listed under the AIS list. Without internet, or when Open Waters cannot be reached, the demo uses the simulated *DEMO* vessels as before. Online AIS is delayed and incomplete: not for navigation.
-- **Centre on the boat on the chart:** a small target button at the bottom right of the chart does the same as the sidebar's **Centre on the boat**, without opening the sidebar. On a phone it sits above the forecast time bar.
+- **Centre on the boat on the chart:** a small target button at the bottom right of the chart does the same as the sidebar's **Centre on the boat**, without opening the sidebar.
 - **AIS tag blocks:** sentences with an IEC 61162-450 tag block in front (`\c:…*hh\!AIVDM,…`, as AIS-catcher and online feeds send) were ignored; the tag block is now skipped, from the boat's receiver too.
 
 ## 0.12.1

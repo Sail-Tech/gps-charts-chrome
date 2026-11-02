@@ -19,8 +19,9 @@
 .ais-list li.danger button { border-color: #d62828; background: #fdecec; }
 .brightness-button { display: grid; place-items: center; color: #073b55; }
 .centre-boat button { display: grid; place-items: center; color: #073b55; }
-/* On a phone the forecast time bar spans the width, so the button sits above it. */
-@media (max-width: 700px) { .map-area:has(.timeline:not(.hidden)) .centre-boat { margin-bottom: 44px; } }
+/* On a phone the forecast time bar spans the width, so the button sits clear above it, whatever the
+   height of the attribution (expanded or not) and of the home indicator. */
+@media (max-width: 700px) { .map-area:has(.timeline:not(.hidden)) .centre-boat { position: absolute; right: 0; bottom: calc(118px + env(safe-area-inset-bottom)); margin: 0 10px 0 0; } }
 /* Night mode: the light chart and panels are inverted to dark and every colour turned red (dim red
    keeps night vision); the dark bars are only reddened. */
 html.night { --night-light: invert(1) hue-rotate(180deg) grayscale(1) contrast(1.15) brightness(.42) sepia(1) saturate(6) hue-rotate(-50deg); --night-dark: grayscale(1) contrast(1.1) brightness(.6) sepia(1) saturate(6) hue-rotate(-50deg); }

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GPS NMEA → C-MAP, i-Boating & Garmin Charts",
   "short_name": "GPS Charts",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Receives GPS data and shows charts, depth contours and soundings in its own dashboard or on the chart providers' sites.",
   "minimum_chrome_version": "116",
   "permissions": ["tabs", "storage", "scripting", "unlimitedStorage"],
