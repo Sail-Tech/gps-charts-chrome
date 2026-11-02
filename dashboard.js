@@ -66,6 +66,11 @@ let aisDemoTimer = null;
 let aisDemoVessels = [];
 let aisDemoCentre = null;
 const AIS_DEMO_SOURCE = 'AIS demo';
+let aisFeed = null;                // the live AIS demo (Open Waters), null when not running
+let aisFeedTimer = null;
+const aisFeedDecoder = new AIS.Decoder();
+const aisFeedCredits = new Set();
+const AIS_FEED_SOURCE = 'Open Waters AIS';
 let infoSticky = false;
 let infoTappedAt = 0;
 let seamarkChunks = null;          // chunk id -> { time, features }, mirrored in localStorage
@@ -864,7 +869,10 @@ function renderAis() {
 function renderAisList(rows) {
   const vessels = rows.filter(r => r.t.kind !== 'aton');
   const closing = vessels.filter(r => r.danger).length;
-  const demo = aisDemoTimer ? ' · demo running (simulated vessels)' : '';
+  const demo = aisFeed ? ' · demo: live vessels from Open Waters AIS' : aisDemoTimer ? ' · demo running (simulated vessels)' : '';
+  // Each source's licence asks for its credit wherever its data is shown.
+  $('aisCredits').hidden = !aisFeed || !aisFeedCredits.size;
+  $('aisCredits').textContent = aisFeed ? `AIS data: ${[...aisFeedCredits].join(' · ')}` : '';
   $('aisSummary').textContent = rows.length
     ? `${vessels.length} vessel${vessels.length === 1 ? '' : 's'}, ${rows.length - vessels.length} aid${rows.length - vessels.length === 1 ? '' : 's'} to navigation${closing ? ` · ${closing} closing` : ''}${config.aisEnabled ? '' : ' · hidden on the chart'}${demo}`
     : `No AIS targets yet. AIS sentences (!AIVDM) from the boat's receiver arrive over the WebSocket, the bridge or the serial port, like the GPS.${demo}`;
@@ -894,10 +902,73 @@ function renderAisList(rows) {
   }
 }
 
-/* ---------- AIS demo: simulated vessels sent as real !AIVDM sentences through the same path ---------- */
+/* ---------- AIS demo: live vessels from Open Waters AIS, or simulated ones without internet ---------- */
 
 function startAisDemo() {
   stopAisDemo(false);
+  if (navigator.onLine === false || TileCache.isOffline() || typeof AISFeed === 'undefined') startSimulatedAisDemo();
+  else startLiveAisDemo();
+}
+
+function startLiveAisDemo() {
+  aisFeed = new AISFeed.Feed({ onEvent: receiveAisFeed, onStatus: aisFeedStatus });
+  aisFeed.start(aisFeedArea());
+  log('AIS demo: connecting to Open Waters AIS for the vessels in the chart view. Online AIS is delayed and incomplete: not for navigation.');
+  renderAis();
+}
+
+function aisFeedArea() {
+  if (!map) return null;
+  const bounds = map.getBounds();
+  return AISFeed.bbox(bounds.getSouth(), bounds.getWest(), bounds.getNorth(), bounds.getEast());
+}
+
+// The subscription follows the chart, once it has settled for a second.
+function scheduleAisFeedArea() {
+  if (!aisFeed) return;
+  clearTimeout(aisFeedTimer);
+  aisFeedTimer = setTimeout(() => {
+    aisFeedTimer = null;
+    if (aisFeed) aisFeed.subscribe(aisFeedArea());
+  }, 1000);
+}
+
+function receiveAisFeed(event) {
+  const now = Date.now();
+  // Reports keep the time they were received: some sources are relayed a minute late, and the snapshot
+  // on subscribing holds older ones, so they age (and show stale) like the boat's own reports.
+  const time = Math.min(event.time ?? now, now);
+  for (const sentence of event.sentences) {
+    const message = aisFeedDecoder.push(sentence, now);
+    if (!message || message.kind === 'safety') continue;
+    // An !AIVDO here is a contributing station's own vessel, not this boat.
+    message.own = false;
+    const positioned = Number.isFinite(message.lat) && Number.isFinite(message.lon);
+    if (positioned && now - time > AISTargets.REMOVE_AFTER_MS) continue;
+    if (aisTargets.update(message, AIS_FEED_SOURCE, positioned ? time : now)) {
+      for (const part of AISFeed.attributionParts(event.attribution)) aisFeedCredits.add(part);
+      scheduleAisRender();
+    }
+  }
+}
+
+function aisFeedStatus(state, detail = {}) {
+  if (!aisFeed) return;
+  if (state === 'live') {
+    log('AIS demo: connected to Open Waters AIS.');
+  } else if (state === 'error') {
+    log(`Open Waters AIS: ${detail.error || 'error'}`);
+  } else if (state === 'closed' && !detail.welcomed) {
+    // Never reached (offline, blocked): the demo still shows something.
+    log('Open Waters AIS could not be reached; the AIS demo uses simulated vessels instead.');
+    stopAisDemo(false);
+    startSimulatedAisDemo();
+  } else if (state === 'closed') {
+    log(`Open Waters AIS disconnected; reconnecting in ${Math.round(detail.delay / 1000)} s.`);
+  }
+}
+
+function startSimulatedAisDemo() {
   const centre = lastFix || (map ? { lat: map.getCenter().lat, lon: map.getCenter().lng } : DEFAULT_FIX);
   aisDemoCentre = { lat: centre.lat, lon: centre.lon };
   const k = Math.cos(centre.lat * Math.PI / 180);
@@ -953,12 +1024,18 @@ function stepAisDemo() {
 
 function stopAisDemo(announce = true) {
   if (aisDemoTimer) clearInterval(aisDemoTimer);
-  const wasRunning = Boolean(aisDemoTimer);
+  const wasRunning = Boolean(aisDemoTimer || aisFeed);
   aisDemoTimer = null;
   aisDemoVessels = [];
+  if (aisFeed) aisFeed.stop();
+  aisFeed = null;
+  clearTimeout(aisFeedTimer);
+  aisFeedTimer = null;
+  aisFeedCredits.clear();
   aisTargets.removeSource(AIS_DEMO_SOURCE);
+  aisTargets.removeSource(AIS_FEED_SOURCE);
   renderAis();
-  if (announce && wasRunning) log('AIS demo stopped; the simulated targets were removed.');
+  if (announce && wasRunning) log('AIS demo stopped; its targets were removed.');
 }
 
 function boatElement() {
@@ -1025,6 +1102,40 @@ class BrightnessControl {
   }
 }
 
+function centreOnBoat() {
+  if (!lastFix) {
+    log('There is no GPS position to centre the chart on yet.');
+    return;
+  }
+  if (!mapReady) {
+    log('The chart is not ready yet. Try again in a moment.');
+    return;
+  }
+  $('followBoat').checked = true;
+  updateMap(lastFix);
+  log('Chart centred on the boat; auto-follow enabled.');
+}
+
+// The sidebar's "Centre on the boat" as a small button on the chart, bottom right.
+class CentreBoatControl {
+  onAdd() {
+    this.container = document.createElement('div');
+    this.container.className = 'maplibregl-ctrl maplibregl-ctrl-group centre-boat';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Centre on the boat';
+    button.setAttribute('aria-label', button.title);
+    button.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    button.addEventListener('click', centreOnBoat);
+    this.container.append(button);
+    return this.container;
+  }
+
+  onRemove() {
+    this.container.remove();
+  }
+}
+
 /* ---------- Map ---------- */
 
 // Created once: removing a map makes Chrome log "CONTEXT_LOST_WEBGL: loseContext" as an extension error.
@@ -1064,6 +1175,7 @@ function initializeMap() {
   map.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
   map.addControl(new BrightnessControl(), 'top-right');
   map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+  map.addControl(new CentreBoatControl(), 'bottom-right');
   map.on('style.load', () => {
     GPSBathymetry.applyVisibility(map, config);
     map.addSource('track', {
@@ -1097,6 +1209,7 @@ function initializeMap() {
   map.on('dragstart', () => { $('followBoat').checked = false; });
   map.on('moveend', scheduleField);
   map.on('moveend', requestSeamarkInfo);
+  map.on('moveend', scheduleAisFeedArea);
   map.on('idle', updateDepthSource);
 }
 
@@ -1858,19 +1971,7 @@ async function initialize() {
     log(`Base chart: ${$('baseChart').selectedOptions[0].textContent}.`);
   });
   updateBaseChartUi();
-  $('centerBoat').addEventListener('click', () => {
-    if (!lastFix) {
-      log('There is no GPS position to centre the chart on yet.');
-      return;
-    }
-    if (!mapReady) {
-      log('The chart is not ready yet. Try again in a moment.');
-      return;
-    }
-    $('followBoat').checked = true;
-    updateMap(lastFix);
-    log('Chart centred on the boat; auto-follow enabled.');
-  });
+  $('centerBoat').addEventListener('click', centreOnBoat);
   $('clearTrack').addEventListener('click', () => {
     track = [];
     if (mapReady) map.getSource('track').setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } });

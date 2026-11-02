@@ -82,7 +82,8 @@
     }
 
     processLine(line, source) {
-      const text = String(line || '').trim();
+      // An IEC 61162-450 tag block (\s:station,c:time*hh\) may precede the sentence.
+      const text = String(line || '').trim().replace(/^(?:\\[^\\]*\\)+/, '');
       if (!text) return null;
       try {
         if (text.startsWith('{')) return this.processJson(JSON.parse(text), source, text);

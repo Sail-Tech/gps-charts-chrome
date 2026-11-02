@@ -116,4 +116,10 @@ const near = (a, b, eps = 1e-5) => Math.abs(a - b) < eps;
   assert.equal(new AIS.Decoder().push('$GPRMC,1,2,3*00'), null);
 }
 
+// An IEC 61162-450 tag block before the sentence (AIS-catcher, online feeds) is skipped.
+{
+  const m = new AIS.Decoder().push('\\s:n2k,c:1793581797884*36\\!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C');
+  assert.equal(m.mmsi, 477553000);
+}
+
 console.log('ais.test.js: all assertions passed');

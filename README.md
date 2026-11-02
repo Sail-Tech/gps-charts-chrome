@@ -9,7 +9,7 @@ The same dashboard also runs as a **web app for iPhone and Android** at **<https
 ## Summary
 
 - **Dashboard chart** with a boat marker oriented to its course, auto-follow and a track. Base chart: Esri World Ocean Base (default), OpenStreetMap or any XYZ source. On top: OpenSeaMap seamarks plus Open Waters depth contours, soundings and depth colours, in **metres or feet**. Hover over or tap a light, buoy, beacon or other mark for its details, and a wind, wave or current symbol for its values.
-- **AIS targets** from the boat's own AIS receiver or transponder (`!AIVDM` over the WebSocket, the bridge or the serial port): vessels coloured by type with course vectors and names, a list in the sidebar, CPA/TCPA, and an **AIS demo** of simulated vessels for testing.
+- **AIS targets** from the boat's own AIS receiver or transponder (`!AIVDM` over the WebSocket, the bridge or the serial port): vessels coloured by type with course vectors and names, a list in the sidebar, CPA/TCPA, and an **AIS demo** with live vessels from [Open Waters AIS](https://openwaters.io/ais/) (or simulated ones without internet) for testing.
 - **Offline cache**: chart tiles you view are stored and shown again when the internet connection drops. You can also save an area before leaving harbour.
 - **Serial ports**: a list of authorised ports with USB adapter names, and **Scan ports**, which finds the port and baud rate that send NMEA.
 - **i-Boating**: the boat appears as i-Boating's own marker with a heading line and moves without reloading the page, keeping your zoom.
@@ -119,7 +119,7 @@ Replace the files in the extension folder with the new ones, open `chrome://exte
 
 On the dashboard, click **Test with a simulated position**. A position in the Solent, off Cowes (UK), should appear: `50.775000, -1.300000`, at 5.2 knots on a course of 45°.
 
-After dragging or zooming the chart, use **Centre on the boat** to return to the last GPS position. This also turns **Follow the boat on the dashboard** back on.
+After dragging or zooming the chart, use **Centre on the boat** (in the sidebar, or the small target button at the bottom right of the chart) to return to the last GPS position. This also turns **Follow the boat on the dashboard** back on.
 
 ## Direct WebSocket input
 
@@ -277,14 +277,16 @@ The cache covers only the extension's dashboard. The C-MAP, i-Boating and Garmin
 
 ### AIS targets
 
-The dashboard shows the vessels around you from the **boat's own AIS receiver or transponder**. The receiver's NMEA 0183 sentences (`!AIVDM`) arrive by the same paths as the GPS: the WebSocket (for example the bundled bridge, from a Wi-Fi multiplexer on TCP/UDP port 10110 or 2000, an NMEA 2000 gateway, OpenCPN's TCP output or AIS-catcher), or a USB/serial receiver at 38400 baud. No online AIS service is used.
+The dashboard shows the vessels around you from the **boat's own AIS receiver or transponder**. The receiver's NMEA 0183 sentences (`!AIVDM`) arrive by the same paths as the GPS: the WebSocket (for example the bundled bridge, from a Wi-Fi multiplexer on TCP/UDP port 10110 or 2000, an NMEA 2000 gateway, OpenCPN's TCP output or AIS-catcher), or a USB/serial receiver at 38400 baud. Only the **AIS demo** uses an online service.
 
-- **Decoded messages:** position reports of Class A (1, 2, 3) and Class B (18, 19), static and voyage data (5, 24), aids to navigation (21), SAR aircraft (9) and safety broadcasts (14, shown in the footer). Multi-sentence messages are joined. Own-ship sentences (`!AIVDO`) are not drawn as targets.
+- **Decoded messages:** position reports of Class A (1, 2, 3) and Class B (18, 19), static and voyage data (5, 24), aids to navigation (21), SAR aircraft (9) and safety broadcasts (14, shown in the footer). Multi-sentence messages are joined, and IEC 61162-450 tag blocks (`\s:…,c:…*hh\` before the sentence, as AIS-catcher and online feeds send) are skipped. Own-ship sentences (`!AIVDO`) are not drawn as targets.
 - **On the chart:** a pointed symbol per vessel, turned to its heading (or course), coloured by type: cargo green, tanker red, passenger blue, fishing orange, pleasure and sailing magenta, tugs and service craft teal, high-speed craft and SAR amber, unknown grey; Class B is smaller, aids to navigation are diamonds and AIS-SART, MOB and EPIRB devices a crossed red circle. A course vector shows where each vessel will be in **Course vector length** minutes (6 by default, 0 for none), and names appear from zoom 12.
 - **Ageing:** a target that misses three reports (at least a minute; Class A every 10 s under way, Class B every 30 s, 3 minutes at anchor) is drawn faded, and one silent for 20 minutes is removed.
 - **CPA/TCPA:** with a GPS fix, each target's closest point of approach and time to it are worked out. A vessel closing to under 0.5 NM within 20 minutes gets a red ring on the chart and goes to the top of the list.
 - **List and read-out:** the **AIS targets** section lists up to 10 vessels, closing ones first, then by range; a tap centres the chart on one. Hovering over or tapping a target shows its name, type and class, MMSI, call sign and IMO, SOG, COG and heading, navigational status, destination and ETA, size and draught, range and bearing from the boat, CPA/TCPA and the age and source of the last report.
-- **AIS demo:** **AIS demo: simulated vessels around the boat** sends nine simulated targets (a cargo ship, tanker, ferry, fishing boat, tug, anchored ship, yacht, RIB and a virtual buoy) as real `!AIVDM` sentences through the same decoder, around the boat or, without a GPS fix, the chart centre. All are named *DEMO*, the sidebar says the demo is running, and the option is never saved: it is off whenever the dashboard opens.
+- **AIS demo, live:** **AIS demo** shows real vessels in the chart view from [Open Waters AIS](https://openwaters.io/ais/), an open network of volunteer receivers and public feeds. It needs no account or key: the dashboard opens a WebSocket to `wss://ais.openwaters.io/v1/stream` and subscribes to the visible area, which follows the chart a second after it stops moving. The anonymous service allows up to 100 square degrees (a larger view is narrowed about its centre) and about 20 reports a second, so in a wide, busy view some reports are missed. Each report carries its raw `!AIVDM` sentences, which go through the same decoder as the boat's receiver. On subscribing, the last known reports in the area arrive first; reports keep the time they were received, so the older ones (some sources are relayed about a minute late) are drawn faded, positions older than 20 minutes are skipped, and a late report never moves a vessel back. `!AIVDO` sentences in the feed are other stations' own vessels and are shown as targets. The licence of each source asks for credit, so the sources heard are listed under the AIS list. A dropped connection is retried after 2 s, then up to every minute.
+- **AIS demo, simulated:** without internet (or with the offline cache's **Offline** mode), or when Open Waters cannot be reached, the demo sends nine simulated targets instead (a cargo ship, tanker, ferry, fishing boat, tug, anchored ship, yacht, RIB and a virtual buoy) as real `!AIVDM` sentences through the same decoder, around the boat or, without a GPS fix, the chart centre. All are named *DEMO*.
+- The sidebar says which demo is running, and the option is never saved: it is off whenever the dashboard opens. Online AIS is delayed and incomplete; it is for trying the AIS display, not for navigation.
 
 AIS shows only vessels that transmit, with gaps and delays, and the CPA check is a simple straight-line estimate. It is not a collision-avoidance system and does not replace a proper lookout or radar.
 
@@ -391,6 +393,7 @@ nmea.js                       NMEA 0183, JSON and Signal K parser
 weather.js                    Open-Meteo forecast, wind barbs, wave and current arrows, field and timeline
 seamarks.js                   Light and mark details from OpenStreetMap (Overpass): tiles, chart-notation lights, descriptions
 ais.js                        AIS decoder (!AIVDM/!AIVDO, multi-sentence messages) and encoder for the demo and tests
+aisfeed.js                    Open Waters AIS WebSocket for the AIS demo: subscription area, events, reconnection
 targets.js                    AIS targets by MMSI: merging, ageing, CPA/TCPA, course vectors
 bridge/gps_bridge.py          TCP/UDP to WebSocket bridge
 bridge/requirements.txt       Python dependency
@@ -402,6 +405,7 @@ tests/weather.test.js         Weather module tests
 tests/seamarks.test.js        Light and mark detail tests
 tests/ais.test.js             AIS decoder tests (reference sentences and encoder round trips)
 tests/targets.test.js         AIS target, ageing and CPA/TCPA tests
+tests/aisfeed.test.js         Open Waters AIS area, event and reconnection tests
 tests/provider.test.js        Provider URLs and 12-character Garmin geohash tests
 ```
 

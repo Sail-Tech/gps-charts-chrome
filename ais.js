@@ -10,6 +10,7 @@
 
   const TEXT = '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !"#$%&\'()*+,-./0123456789:;<=>?';
   const FRAGMENT_TTL_MS = 10000;
+  const TAG_BLOCK = /^(?:\\[^\\]*\\)+/;
 
   /* ---------- Bits ---------- */
 
@@ -183,7 +184,8 @@
     }
 
     push(sentence, now = Date.now()) {
-      const text = String(sentence || '').trim();
+      // An IEC 61162-450 tag block (\s:station,c:time*hh\) may precede the sentence.
+      const text = String(sentence || '').trim().replace(TAG_BLOCK, '');
       const star = text.indexOf('*');
       if (!/^!..VD[MO],/.test(text) || star < 0) return null;
       const fields = text.slice(1, star).split(',');

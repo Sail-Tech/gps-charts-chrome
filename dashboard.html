@@ -91,7 +91,8 @@
         <ol id="aisList" class="ais-list"></ol>
         <label class="check"><input id="aisEnabled" type="checkbox" checked> Show AIS targets on the chart</label>
         <label>Course vector length (minutes, 0 = none) <input id="aisVectorMinutes" type="number" min="0" max="60" step="1"></label>
-        <label class="check"><input id="aisDemo" type="checkbox"> AIS demo: simulated vessels around the boat (testing only)</label>
+        <label class="check"><input id="aisDemo" type="checkbox"> AIS demo: live vessels in the chart view from Open Waters AIS, or simulated ones without internet (testing only, not for navigation)</label>
+        <p id="aisCredits" class="muted" hidden></p>
       </section>
 
       <section>
@@ -242,6 +243,7 @@
   <script src="weather.js"></script>
   <script src="seamarks.js"></script>
   <script src="ais.js"></script>
+  <script src="aisfeed.js"></script>
   <script src="targets.js"></script>
   <script src="serialports.js"></script>
   <script src="dashboard.js"></script>

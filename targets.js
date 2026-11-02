@@ -71,12 +71,14 @@
     }
 
     // Merges a decoded message. Own-ship (VDO) messages, base stations and messages without a usable
-    // position are not targets. Returns the updated target or null.
+    // position are not targets. `now` is when the report was received; a position older than the one
+    // already held (an online feed relays some sources late) is ignored. Returns the updated target or null.
     update(message, source, now = Date.now()) {
       if (!message || !message.mmsi || message.own) return null;
       if (!['position', 'static', 'aton'].includes(message.kind)) return null;
-      const hasPosition = Number.isFinite(message.lat) && Number.isFinite(message.lon);
       let target = this.byMmsi.get(message.mmsi);
+      const hasPosition = Number.isFinite(message.lat) && Number.isFinite(message.lon) &&
+        !(target && now < target.lastPosition);
       if (!target) {
         if (!hasPosition && message.kind !== 'static') return null;
         target = { mmsi: message.mmsi, kind: message.kind === 'aton' ? 'aton' : 'vessel', class: message.class || null, lastPosition: 0, lastStatic: 0, source };

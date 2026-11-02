@@ -78,4 +78,13 @@ assert.equal(checksumIsValid(RMC.replace('*6A', '*00')), false);
   assert.equal(fixes[1].cog, 54.7);
 }
 
+// Tag blocks before AIS sentences are removed before the checksum check.
+{
+  const ais = [], errors = [];
+  const parser = new Parser(() => {}, error => errors.push(error), sentence => ais.push(sentence));
+  parser.processLine('\\c:1793581798108*66\\!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C', 'test');
+  assert.deepEqual(errors, []);
+  assert.equal(ais[0], '!AIVDM,1,1,,B,177KQJ5000G?tO`K>RA1wUbN0TKH,0*5C');
+}
+
 console.log('All NMEA/JSON tests passed.');
